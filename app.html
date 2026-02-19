@@ -168,6 +168,30 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .token-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
 .token-row:last-child{border-bottom:none}
 .token-row .model-name{font-family:monospace;font-size:11px;color:var(--text-d)}
+/* Model Settings */
+.provider-tabs{display:flex;gap:8px;margin-bottom:20px}
+.provider-tab{flex:1;padding:14px;border-radius:10px;border:2px solid var(--border);background:var(--bg-card);cursor:pointer;text-align:center;transition:.15s}
+.provider-tab:hover{border-color:var(--border-h)}
+.provider-tab.active-gemini{border-color:#6366f1;background:rgba(99,102,241,.1)}
+.provider-tab.active-openai{border-color:#10a37f;background:rgba(16,163,127,.1)}
+.provider-tab .pt-icon{font-size:22px;font-weight:900;margin-bottom:4px}
+.provider-tab .pt-label{font-size:13px;font-weight:700}
+.provider-tab .pt-sub{font-size:11px;color:var(--text-m);margin-top:2px}
+.model-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px}
+.model-card{padding:12px 14px;border-radius:8px;border:2px solid var(--border);background:var(--bg-card);cursor:pointer;transition:.15s}
+.model-card:hover{border-color:var(--border-h)}
+.model-card.selected{border-color:var(--primary);background:var(--primary-dim)}
+.model-card.selected-green{border-color:#10a37f;background:rgba(16,163,127,.1)}
+.model-card .mc-label{font-size:13px;font-weight:700;margin-bottom:2px}
+.model-card .mc-id{font-size:10px;font-family:monospace;color:var(--text-m)}
+.model-card .mc-desc{font-size:11px;color:var(--text-d);margin-top:4px}
+.model-card .mc-price{font-size:10px;color:var(--warn);margin-top:4px}
+.settings-section{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.settings-section h3{font-size:14px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.cur-model-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-left:8px}
+.cur-model-badge.gemini{background:rgba(99,102,241,.2);color:var(--primary-h)}
+.cur-model-badge.openai{background:rgba(16,163,127,.2);color:#10a37f}
+
 /* Responsive */
 @media(max-width:900px){
   .feature-grid{grid-template-columns:repeat(2,1fr)}
@@ -203,25 +227,80 @@ const SECTIONS = [
 ];
 
 // ════════════════════════════════════════════════════════════════
-// TOKEN / COST TRACKER
+// MODEL CONFIG SYSTEM
 // ════════════════════════════════════════════════════════════════
-// Gemini 2025 공식 가격 (per 1M tokens)
-const MODEL_PRICING = {
-  'gemini-2.0-flash': {
-    inputPerM:  0.10,   // $0.10 / 1M input tokens
-    outputPerM: 0.40,   // $0.40 / 1M output tokens
-    imagePerM:  0.00,   // 텍스트 모델 — 이미지 출력 없음
-    label: 'Gemini 2.0 Flash',
-    type: 'text',
+// LLM 프로바이더 및 모델 목록 정의
+const LLM_PROVIDERS = {
+  gemini: {
+    label: 'Google Gemini',
+    icon: '✦',
+    color: '#6366f1',
+    models: [
+      { id: 'gemini-2.0-flash',       label: 'Gemini 2.0 Flash',       desc: '빠름 · 저비용',         inputPerM: 0.10,  outputPerM: 0.40  },
+      { id: 'gemini-2.0-flash-lite',  label: 'Gemini 2.0 Flash Lite',  desc: '최저비용',              inputPerM: 0.075, outputPerM: 0.30  },
+      { id: 'gemini-1.5-pro',         label: 'Gemini 1.5 Pro',         desc: '고성능 · 긴 컨텍스트',  inputPerM: 1.25,  outputPerM: 5.00  },
+      { id: 'gemini-2.5-pro-preview', label: 'Gemini 2.5 Pro Preview', desc: '최고성능 (프리뷰)',      inputPerM: 1.25,  outputPerM: 10.00 },
+    ],
   },
-  'gemini-3-pro-image-preview': {
-    inputPerM:  3.50,   // $3.50 / 1M input tokens
-    outputPerM: 10.50,  // $10.50 / 1M output tokens
-    imageOut:   0.039,  // $0.039 per image output
-    label: 'Gemini 3 Pro Image',
-    type: 'image',
+  openai: {
+    label: 'OpenAI ChatGPT',
+    icon: '◆',
+    color: '#10a37f',
+    models: [
+      { id: 'gpt-4o-mini',  label: 'GPT-4o mini',  desc: '빠름 · 저비용',  inputPerM: 0.15,  outputPerM: 0.60  },
+      { id: 'gpt-4o',       label: 'GPT-4o',        desc: '고성능 · 멀티모달', inputPerM: 2.50,  outputPerM: 10.00 },
+      { id: 'gpt-4-turbo',  label: 'GPT-4 Turbo',  desc: '강력한 추론',    inputPerM: 10.00, outputPerM: 30.00 },
+      { id: 'o1-mini',      label: 'o1-mini',       desc: '고급 추론',      inputPerM: 1.10,  outputPerM: 4.40  },
+    ],
   },
 };
+
+// 이미지 생성 모델 목록 (Gemini 전용)
+const IMAGE_MODELS = [
+  { id: 'gemini-3-pro-image-preview',       label: 'Gemini 3 Pro Image Preview', desc: '최고품질 (권장)',  inputPerM: 3.50,  outputPerM: 10.50, imageOut: 0.039 },
+  { id: 'gemini-2.0-flash-exp-image-generation', label: 'Gemini 2.0 Flash Image', desc: '빠름 · 실험적', inputPerM: 0.10,  outputPerM: 0.40,  imageOut: 0.02  },
+];
+
+// 설정 저장/불러오기
+function saveModelConfig(cfg) {
+  try { localStorage.setItem('model_config', JSON.stringify(cfg)); } catch(e) {}
+}
+function loadModelConfig() {
+  try {
+    const raw = localStorage.getItem('model_config');
+    if (raw) return JSON.parse(raw);
+  } catch(e) {}
+  return {
+    llmProvider: 'gemini',
+    llmModel: 'gemini-2.0-flash',
+    imageModel: 'gemini-3-pro-image-preview',
+    openaiKey: '',
+  };
+}
+function saveOpenAIKey(key) {
+  try { localStorage.setItem('openai_api_key', key); } catch(e) {}
+}
+function loadOpenAIKey() {
+  try { return localStorage.getItem('openai_api_key') || ''; } catch(e) { return ''; }
+}
+
+// ════════════════════════════════════════════════════════════════
+// TOKEN / COST TRACKER
+// ════════════════════════════════════════════════════════════════
+// 가격표를 동적으로 구성 (LLM_PROVIDERS + IMAGE_MODELS 기반)
+function buildModelPricing() {
+  const pricing = {};
+  for (const prov of Object.values(LLM_PROVIDERS)) {
+    for (const m of prov.models) {
+      pricing[m.id] = { inputPerM: m.inputPerM, outputPerM: m.outputPerM, label: m.label, type: 'text' };
+    }
+  }
+  for (const m of IMAGE_MODELS) {
+    pricing[m.id] = { inputPerM: m.inputPerM, outputPerM: m.outputPerM, imageOut: m.imageOut, label: m.label, type: 'image' };
+  }
+  return pricing;
+}
+const MODEL_PRICING = buildModelPricing();
 
 const tokenTracker = {
   sessions: {},   // modelId → { inputTokens, outputTokens, calls, imageCount, costUSD }
@@ -400,8 +479,9 @@ tokenTracker.load();
 // GEMINI API SERVICE
 // ════════════════════════════════════════════════════════════════
 class GeminiAPI {
-  constructor(apiKey) {
+  constructor(apiKey, model) {
     this.apiKey = apiKey;
+    this.model = model || 'gemini-2.0-flash';
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
   }
 
@@ -440,14 +520,14 @@ Respond ONLY with the JSON object, no other text.`;
       generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
     };
 
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
+    const res = await fetch(`${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
+    tokenTracker.record(this.model, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
     let text = data.candidates[0].content.parts[0].text.trim();
     text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
     return JSON.parse(text);
@@ -499,20 +579,21 @@ Respond ONLY with the JSON object.`;
       generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
     };
 
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
+    const res = await fetch(`${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
+    tokenTracker.record(this.model, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
     let text = data.candidates[0].content.parts[0].text.trim();
     text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
     return JSON.parse(text);
   }
 
-  async generateImage(prompt, productImageBase64, mimeType) {
+  async generateImage(prompt, productImageBase64, mimeType, imageModel) {
+    const imgMod = imageModel || getImageModel();
     const parts = [
       { text: `Create a professional Korean e-commerce product detail page section image. ${prompt} Style: clean, modern, high-end Korean shopping mall aesthetic. Size: 860px wide.` }
     ];
@@ -529,14 +610,14 @@ Respond ONLY with the JSON object.`;
     };
 
     try {
-      const res = await fetch(`${this.baseUrl}/models/gemini-3-pro-image-preview:generateContent?key=${this.apiKey}`, {
+      const res = await fetch(`${this.baseUrl}/models/${imgMod}:generateContent?key=${this.apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      tokenTracker.record('gemini-3-pro-image-preview', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
+      tokenTracker.record(imgMod, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
 
       for (const part of data.candidates[0].content.parts) {
         if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
@@ -573,18 +654,193 @@ List 5-8 competitor products. Respond ONLY with JSON.`;
       generationConfig: { temperature: 0.5, maxOutputTokens: 2048 }
     };
 
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
+    const res = await fetch(`${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
+    tokenTracker.record(this.model, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
     let text = data.candidates[0].content.parts[0].text.trim();
     text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
     return JSON.parse(text);
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// OPENAI API SERVICE
+// ════════════════════════════════════════════════════════════════
+class OpenAIAPI {
+  constructor(apiKey, model) {
+    this.apiKey = apiKey;
+    this.model = model || 'gpt-4o-mini';
+    this.baseUrl = 'https://api.openai.com/v1';
+  }
+
+  // JSON 응답 파싱 헬퍼
+  _parseJSON(text) {
+    text = text.trim().replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
+    return JSON.parse(text);
+  }
+
+  async analyzeImage(imageBase64, mimeType) {
+    const prompt = `You are a professional e-commerce product analyst. Analyze this product image in extreme detail.
+Return a JSON object with the following fields:
+{
+    "product_name": "detected product name in Korean",
+    "product_name_en": "detected product name in English",
+    "category": "product category",
+    "brand": "brand name if visible",
+    "colors": ["list of colors detected"],
+    "materials": ["detected or estimated materials"],
+    "shape": "product shape description",
+    "size_estimate": "estimated size",
+    "key_features": ["list of 5-10 key features"],
+    "target_audience": "target customer demographic",
+    "price_range_estimate": "estimated price range in KRW",
+    "mood": "overall mood/aesthetic of the product",
+    "use_cases": ["list of use cases"],
+    "selling_points": ["list of unique selling points"],
+    "style_keywords": ["style-related keywords for design"],
+    "complementary_colors": ["colors that complement the product"],
+    "text_color_recommendation": "recommended text color for overlay",
+    "detailed_description": "A detailed Korean description for marketing"
+}
+Respond ONLY with the JSON object, no other text.`;
+
+    const body = {
+      model: this.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: 'high' } }
+        ]
+      }],
+      max_tokens: 4096,
+      temperature: 0.3,
+    };
+
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    tokenTracker.record(this.model, data.usage?.prompt_tokens, data.usage?.completion_tokens);
+    return this._parseJSON(data.choices[0].message.content);
+  }
+
+  async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef) {
+    const prompt = `You are a Korean e-commerce detail page content creator.
+
+Product Analysis:
+${JSON.stringify(productAnalysis, null, 2)}
+
+${competitorRef ? 'Competitor Reference: ' + competitorRef : ''}
+
+Section to create: ${sectionDef.name}
+Section number: ${sectionDef.n}
+Section purpose: ${sectionDef.purpose}
+User custom instructions: ${customInstructions || 'None'}
+
+Based on the product analysis, generate content for this section.
+Return a JSON object:
+{
+    "headline": "Main headline text in Korean (impactful, short)",
+    "subheadline": "Sub headline in Korean",
+    "body_text": "Body copy in Korean (2-3 sentences)",
+    "cta_text": "Call to action text if applicable, or empty string",
+    "layout_suggestion": "Layout recommendation",
+    "color_scheme": {
+        "background": "#hex",
+        "text_primary": "#hex",
+        "text_secondary": "#hex",
+        "accent": "#hex"
+    },
+    "font_suggestion": {
+        "headline_font": "Noto Sans KR",
+        "headline_size": "px value like 42px",
+        "headline_weight": "700 or 900",
+        "body_font": "Noto Sans KR",
+        "body_size": "px value like 16px"
+    },
+    "image_description": "Detailed description of what the section image should look like",
+    "product_placement": "Description of how the product image should be placed",
+    "design_notes": "Additional design recommendations",
+    "extra_elements": ["list of bullet points or features if applicable"]
+}
+Respond ONLY with the JSON object.`;
+
+    const body = {
+      model: this.model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2048,
+      temperature: 0.7,
+    };
+
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    tokenTracker.record(this.model, data.usage?.prompt_tokens, data.usage?.completion_tokens);
+    return this._parseJSON(data.choices[0].message.content);
+  }
+
+  async searchSimilarProducts(productName, category) {
+    const prompt = `You are a Korean e-commerce market analyst.
+For the product "${productName}" in the category "${category}", provide competitor analysis.
+Return a JSON object:
+{
+    "similar_products": [
+        {"name": "product name", "price_range": "price", "strengths": "key strength", "detail_page_style": "description of their detail page approach"}
+    ],
+    "market_insights": "brief market analysis in Korean",
+    "detail_page_trends": ["list of current detail page design trends for this category"],
+    "recommended_approach": "recommended detail page strategy in Korean"
+}
+List 5-8 competitor products. Respond ONLY with JSON.`;
+
+    const body = {
+      model: this.model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2048,
+      temperature: 0.5,
+    };
+
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    tokenTracker.record(this.model, data.usage?.prompt_tokens, data.usage?.completion_tokens);
+    return this._parseJSON(data.choices[0].message.content);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// LLM ROUTER — 선택된 프로바이더/모델로 자동 분기
+// ════════════════════════════════════════════════════════════════
+function getLLMClient() {
+  const cfg = state.modelConfig;
+  if (cfg.llmProvider === 'openai') {
+    if (!state.openaiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다. 모델 설정에서 입력해주세요.');
+    return new OpenAIAPI(state.openaiKey, cfg.llmModel);
+  }
+  // gemini
+  if (!state.apiKey) throw new Error('Gemini API 키가 설정되지 않았습니다.');
+  return new GeminiAPI(state.apiKey, cfg.llmModel);
+}
+
+function getImageModel() {
+  return state.modelConfig.imageModel || 'gemini-3-pro-image-preview';
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -623,10 +879,13 @@ function loadSectionInstructions() {
 // ════════════════════════════════════════════════════════════════
 const _savedKey = loadKey();
 const _savedInstructions = loadSectionInstructions();
+const _savedModelConfig = loadModelConfig();
 const state = {
-  step: 'upload', // upload | analyzing | sections | generating | preview
+  step: 'upload', // upload | analyzing | sections | generating | preview | modelsettings
   apiKey: _savedKey,
   showApiModal: !_savedKey,
+  modelConfig: _savedModelConfig,
+  openaiKey: loadOpenAIKey(),
   productName: '',
   imagePreview: null,
   imageBase64: null,
@@ -694,6 +953,7 @@ function render() {
           ${state.step === 'preview' ? renderPreview() : ''}
           ${state.step === 'imagecuts' ? renderImageCuts() : ''}
           ${state.step === 'automation' ? renderAutomation() : ''}
+          ${state.step === 'modelsettings' ? renderModelSettings() : ''}
         </div>
       </main>
     </div>
@@ -735,7 +995,13 @@ function renderSidebar() {
     {icon:'preview',label:'미리보기',step:'preview',need:'preview'},
     {icon:'auto_awesome',label:'이미지컷 생성',step:'imagecuts',always:true},
     {icon:'cloud_sync',label:'자동화',step:'automation',always:true},
+    {icon:'tune',label:'모델 설정',step:'modelsettings',always:true},
   ];
+  const cfg = state.modelConfig;
+  const prov = LLM_PROVIDERS[cfg.llmProvider];
+  const mdl = prov?.models.find(m => m.id === cfg.llmModel);
+  const imgMdl = IMAGE_MODELS.find(m => m.id === cfg.imageModel);
+
   return `<aside class="sidebar">
     <div class="logo">
       <span class="logo-icon">✦</span>
@@ -752,6 +1018,11 @@ function renderSidebar() {
         </button>`;
       }).join('')}
     </nav>
+    <!-- 현재 모델 표시 -->
+    <div style="padding:8px 12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-m)">
+      <div style="margin-bottom:4px">LLM: <span style="color:${cfg.llmProvider==='openai'?'#10a37f':'var(--primary-h)'};font-weight:700">${mdl?.label||cfg.llmModel}</span></div>
+      <div>IMG: <span style="color:var(--orange);font-weight:700">${imgMdl?.label||cfg.imageModel}</span></div>
+    </div>
     <div style="padding:12px 16px;border-top:1px solid var(--border)">
       <button class="btn-sm" id="changeApiKey" style="width:100%;justify-content:center">
         <span class="material-icons-outlined" style="font-size:14px">key</span> API 키 변경
@@ -1107,9 +1378,13 @@ function handleFile(file) {
 
 async function startAnalysis() {
   if (!state.imageBase64) { state.error = '제품 이미지를 업로드해주세요.'; render(); return; }
-  if (!state.apiKey) { state.showApiModal = true; render(); return; }
 
-  gemini = gemini || new GeminiAPI(state.apiKey);
+  let llm;
+  try { llm = getLLMClient(); } catch(e) {
+    if (state.modelConfig.llmProvider === 'openai') { state.error = e.message; render(); return; }
+    state.showApiModal = true; render(); return;
+  }
+
   state.error = '';
   state.step = 'analyzing';
   state.progress = 10;
@@ -1118,7 +1393,7 @@ async function startAnalysis() {
 
   try {
     // 1. Analyze image
-    const analysis = await gemini.analyzeImage(state.imageBase64, state.imageMime);
+    const analysis = await llm.analyzeImage(state.imageBase64, state.imageMime);
     if (state.productName) analysis.product_name = state.productName;
     state.analysis = analysis;
     state.progress = 25;
@@ -1127,7 +1402,7 @@ async function startAnalysis() {
 
     // 2. Competitor search
     try {
-      const competitors = await gemini.searchSimilarProducts(
+      const competitors = await llm.searchSimilarProducts(
         analysis.product_name || analysis.product_name_en,
         analysis.category
       );
@@ -1154,6 +1429,11 @@ async function generateAllSections() {
   state.sectionImages = {};
   render();
 
+  let llm;
+  try { llm = getLLMClient(); } catch(e) { state.error = e.message; state.step = 'sections'; render(); return; }
+  // gemini 인스턴스도 이미지 생성용으로 유지
+  const geminiForImage = new GeminiAPI(state.apiKey);
+
   const total = SECTIONS.length;
   const compRef = state.competitorData ? JSON.stringify(state.competitorData).substring(0, 1000) : '';
 
@@ -1165,22 +1445,23 @@ async function generateAllSections() {
     render();
 
     try {
-      // Generate content
-      const content = await gemini.generateSectionContent(
+      // Generate content via selected LLM
+      const content = await llm.generateSectionContent(
         s, state.analysis, state.sectionInstructions[s.id] || '', compRef
       );
       state.sectionContents[s.id] = content;
 
-      // Try to generate image
-      state.progressMsg = `[${i+1}/${total}] ${s.name} 이미지 생성 중...`;
-      render();
-
-      try {
-        const imgPrompt = content.image_description || content.design_notes || s.purpose;
-        const img = await gemini.generateImage(imgPrompt, state.imageBase64, state.imageMime);
-        if (img) state.sectionImages[s.id] = img;
-      } catch (e) {
-        console.warn(`Image gen failed for ${s.id}:`, e);
+      // Try to generate image (항상 Gemini 이미지 모델 사용)
+      if (state.apiKey) {
+        state.progressMsg = `[${i+1}/${total}] ${s.name} 이미지 생성 중...`;
+        render();
+        try {
+          const imgPrompt = content.image_description || content.design_notes || s.purpose;
+          const img = await geminiForImage.generateImage(imgPrompt, state.imageBase64, state.imageMime);
+          if (img) state.sectionImages[s.id] = img;
+        } catch (e) {
+          console.warn(`Image gen failed for ${s.id}:`, e);
+        }
       }
 
     } catch (e) {
@@ -1211,17 +1492,23 @@ async function regenerateSection(sectionId) {
   state.progressMsg = `${s.name} 재생성 중...`;
   const compRef = state.competitorData ? JSON.stringify(state.competitorData).substring(0, 1000) : '';
 
+  let llm;
+  try { llm = getLLMClient(); } catch(e) { state.error = e.message; render(); return; }
+
   try {
-    const content = await gemini.generateSectionContent(
+    const content = await llm.generateSectionContent(
       s, state.analysis, state.sectionInstructions[sectionId] || '', compRef
     );
     state.sectionContents[sectionId] = content;
 
-    try {
-      const imgPrompt = content.image_description || content.design_notes || s.purpose;
-      const img = await gemini.generateImage(imgPrompt, state.imageBase64, state.imageMime);
-      if (img) state.sectionImages[sectionId] = img;
-    } catch (e) {}
+    if (state.apiKey) {
+      try {
+        const geminiForImage = new GeminiAPI(state.apiKey);
+        const imgPrompt = content.image_description || content.design_notes || s.purpose;
+        const img = await geminiForImage.generateImage(imgPrompt, state.imageBase64, state.imageMime);
+        if (img) state.sectionImages[sectionId] = img;
+      } catch (e) {}
+    }
 
     render();
   } catch (e) {
@@ -1492,6 +1779,125 @@ function autoLog(type, msg) {
 // ════════════════════════════════════════════════════════════════
 // AUTOMATION RENDER
 // ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// MODEL SETTINGS UI
+// ════════════════════════════════════════════════════════════════
+function renderModelSettings() {
+  const cfg = state.modelConfig;
+  const geminiProv = LLM_PROVIDERS.gemini;
+  const openaiProv = LLM_PROVIDERS.openai;
+
+  const renderModelCard = (m, selectedId, colorClass) => {
+    const sel = m.id === selectedId;
+    return `<div class="model-card ${sel ? colorClass : ''}" data-pick-model="${m.id}">
+      <div class="mc-label">${m.label}</div>
+      <div class="mc-id">${m.id}</div>
+      <div class="mc-desc">${m.desc}</div>
+      <div class="mc-price">in $${m.inputPerM}/M · out $${m.outputPerM}/M</div>
+      ${sel ? '<div style="margin-top:6px;font-size:11px;color:var(--ok);font-weight:700">✔ 선택됨</div>' : ''}
+    </div>`;
+  };
+
+  const renderImgModelCard = (m) => {
+    const sel = m.id === cfg.imageModel;
+    return `<div class="model-card ${sel ? 'selected' : ''}" data-pick-imgmodel="${m.id}">
+      <div class="mc-label">${m.label}</div>
+      <div class="mc-id">${m.id}</div>
+      <div class="mc-desc">${m.desc}</div>
+      <div class="mc-price">in $${m.inputPerM}/M · out $${m.outputPerM}/M · img $${m.imageOut}/장</div>
+      ${sel ? '<div style="margin-top:6px;font-size:11px;color:var(--ok);font-weight:700">✔ 선택됨</div>' : ''}
+    </div>`;
+  };
+
+  return `<div class="fade-in">
+    <h1 class="page-title">⚙️ 모델 설정</h1>
+    <p class="page-desc">LLM 프로바이더와 모델을 선택하세요. 이미지 생성은 항상 Gemini 모델을 사용합니다.</p>
+
+    <!-- ── LLM 프로바이더 선택 ── -->
+    <div class="settings-section">
+      <h3><span class="material-icons-outlined" style="font-size:18px;color:var(--primary)">psychology</span> LLM 프로바이더 (텍스트/분석)</h3>
+
+      <div class="provider-tabs">
+        <div class="provider-tab ${cfg.llmProvider==='gemini' ? 'active-gemini' : ''}" data-pick-provider="gemini">
+          <div class="pt-icon" style="color:#6366f1">✦</div>
+          <div class="pt-label">Google Gemini</div>
+          <div class="pt-sub">Gemini API Key 사용</div>
+        </div>
+        <div class="provider-tab ${cfg.llmProvider==='openai' ? 'active-openai' : ''}" data-pick-provider="openai">
+          <div class="pt-icon" style="color:#10a37f">◆</div>
+          <div class="pt-label">OpenAI ChatGPT</div>
+          <div class="pt-sub">OpenAI API Key 사용</div>
+        </div>
+      </div>
+
+      <!-- Gemini LLM 모델 목록 -->
+      ${cfg.llmProvider === 'gemini' ? `
+      <p style="font-size:12px;color:var(--text-m);margin-bottom:10px">Gemini 텍스트 모델 선택</p>
+      <div class="model-list">
+        ${geminiProv.models.map(m => renderModelCard(m, cfg.llmModel, 'selected')).join('')}
+      </div>
+      <div class="input-group">
+        <label class="label">Gemini API Key</label>
+        <div style="position:relative">
+          <input type="password" class="input" id="geminiKeyInput" value="${state.apiKey}" placeholder="AIza..." style="font-family:monospace;font-size:13px;padding-right:40px">
+          <span class="material-icons-outlined" id="toggleGeminiKey" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--text-m)">visibility</span>
+        </div>
+      </div>
+      ` : `
+      <!-- OpenAI LLM 모델 목록 -->
+      <p style="font-size:12px;color:var(--text-m);margin-bottom:10px">OpenAI 모델 선택</p>
+      <div class="model-list">
+        ${openaiProv.models.map(m => renderModelCard(m, cfg.llmModel, 'selected-green')).join('')}
+      </div>
+      <div class="input-group">
+        <label class="label">OpenAI API Key</label>
+        <div style="position:relative">
+          <input type="password" class="input" id="openaiKeyInput" value="${state.openaiKey}" placeholder="sk-..." style="font-family:monospace;font-size:13px;padding-right:40px">
+          <span class="material-icons-outlined" id="toggleOpenAIKey" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--text-m)">visibility</span>
+        </div>
+      </div>
+      `}
+    </div>
+
+    <!-- ── 이미지 생성 모델 ── -->
+    <div class="settings-section">
+      <h3><span class="material-icons-outlined" style="font-size:18px;color:var(--orange)">image</span> 이미지 생성 모델 (Gemini 전용)</h3>
+      <p style="font-size:12px;color:var(--text-m);margin-bottom:12px">섹션 이미지 및 이미지컷 생성 시 사용됩니다. Gemini API Key가 필요합니다.</p>
+      <div class="model-list">
+        ${IMAGE_MODELS.map(m => renderImgModelCard(m)).join('')}
+      </div>
+      ${cfg.llmProvider === 'openai' ? `
+      <div class="input-group" style="margin-top:4px">
+        <label class="label">이미지 생성용 Gemini API Key (OpenAI 사용 시에도 필요)</label>
+        <div style="position:relative">
+          <input type="password" class="input" id="geminiKeyInput" value="${state.apiKey}" placeholder="AIza..." style="font-family:monospace;font-size:13px;padding-right:40px">
+          <span class="material-icons-outlined" id="toggleGeminiKey" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--text-m)">visibility</span>
+        </div>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- ── 저장 버튼 ── -->
+    <div style="display:flex;gap:12px;align-items:center">
+      <button class="btn-primary" id="saveModelSettings">
+        <span class="material-icons-outlined" style="font-size:18px">save</span>
+        설정 저장
+      </button>
+      <div id="modelSaveMsg" style="font-size:13px;color:var(--ok);display:none">✅ 저장되었습니다!</div>
+    </div>
+
+    <!-- ── 현재 설정 요약 ── -->
+    <div style="margin-top:24px;padding:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;font-size:12px;line-height:2">
+      <div style="font-weight:700;margin-bottom:8px;color:var(--text-d)">현재 설정 요약</div>
+      <div>LLM 프로바이더: <b style="color:${cfg.llmProvider==='openai'?'#10a37f':'var(--primary-h)'}">${LLM_PROVIDERS[cfg.llmProvider]?.label}</b></div>
+      <div>LLM 모델: <code style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px">${cfg.llmModel}</code></div>
+      <div>이미지 모델: <code style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px">${cfg.imageModel}</code></div>
+      <div>Gemini Key: <span style="color:${state.apiKey?'var(--ok)':'var(--err)'}">${state.apiKey ? '✅ 설정됨' : '❌ 미설정'}</span></div>
+      <div>OpenAI Key: <span style="color:${state.openaiKey?'var(--ok)':'var(--text-m)'}">${state.openaiKey ? '✅ 설정됨' : '— 미설정'}</span></div>
+    </div>
+  </div>`;
+}
+
 function renderAutomation() {
   const a = state.auto;
   const connected = a.driveConnected;
@@ -1662,8 +2068,8 @@ function renderAutomation() {
 // AUTOMATION ENGINE
 // ════════════════════════════════════════════════════════════════
 async function autoProcessOne() {
-  if (!driveService || !state.apiKey) {
-    autoLog('err', 'Drive 또는 Gemini API 키가 설정되지 않음');
+  if (!driveService) {
+    autoLog('err', 'Drive가 연결되지 않음');
     return;
   }
   if (!state.auto.inputFolderId || !state.auto.outputFolderId) {
@@ -1671,7 +2077,9 @@ async function autoProcessOne() {
     return;
   }
 
-  gemini = gemini || new GeminiAPI(state.apiKey);
+  let autoLLM;
+  try { autoLLM = getLLMClient(); } catch(e) { autoLog('err', e.message); return; }
+  const autoGeminiImage = new GeminiAPI(state.apiKey);
 
   // 1. List images in input folder
   autoLog('info', '입력 폴더 스캔 중...');
@@ -1729,8 +2137,8 @@ async function autoProcessOne() {
     state.auto.currentMsg = 'AI 분석 중...';
     render();
 
-    // 5. Analyze with Gemini
-    const analysis = await gemini.analyzeImage(imgData.base64, imgData.mime);
+    // 5. Analyze with selected LLM
+    const analysis = await autoLLM.analyzeImage(imgData.base64, imgData.mime);
     autoLog('ok', `분석 완료: ${analysis.product_name || file.name}`);
     state.auto.currentProgress = 25;
     state.auto.currentMsg = '경쟁 분석 중...';
@@ -1739,7 +2147,7 @@ async function autoProcessOne() {
     // 6. Competitor search
     let compRef = '';
     try {
-      const comp = await gemini.searchSimilarProducts(analysis.product_name || analysis.product_name_en, analysis.category);
+      const comp = await autoLLM.searchSimilarProducts(analysis.product_name || analysis.product_name_en, analysis.category);
       compRef = JSON.stringify(comp).substring(0, 1000);
       autoLog('ok', `경쟁 분석 완료: ${comp.similar_products?.length || 0}개`);
     } catch(e) {
@@ -1760,15 +2168,17 @@ async function autoProcessOne() {
       render();
 
       try {
-        const content = await gemini.generateSectionContent(s, analysis, instructions[s.id] || '', compRef);
+        const content = await autoLLM.generateSectionContent(s, analysis, instructions[s.id] || '', compRef);
         sectionContents[s.id] = content;
 
-        // Image
-        try {
-          const imgPrompt = content.image_description || content.design_notes || s.purpose;
-          const img = await gemini.generateImage(imgPrompt, imgData.base64, imgData.mime);
-          if (img) sectionImages[s.id] = img;
-        } catch(e) {}
+        // Image (항상 Gemini 이미지 모델)
+        if (state.apiKey) {
+          try {
+            const imgPrompt = content.image_description || content.design_notes || s.purpose;
+            const img = await autoGeminiImage.generateImage(imgPrompt, imgData.base64, imgData.mime);
+            if (img) sectionImages[s.id] = img;
+          } catch(e) {}
+        }
       } catch(e) {
         autoLog('err', `섹션 ${s.name} 실패: ${e.message}`);
         sectionContents[s.id] = { headline: s.name, subheadline: '생성 실패', body_text: e.message, color_scheme: {background:'#fff',text_primary:'#c00',text_secondary:'#e00'}, font_suggestion:{headline_size:'32px',body_size:'14px'} };
@@ -1958,14 +2368,15 @@ Maintain the product as the focal point. Aspect ratio 4:3.`;
       generationConfig: { temperature: 0.8, responseModalities: ['TEXT', 'IMAGE'] }
     };
 
-    // 무조건 gemini-3-pro-image-preview 사용
+    // 선택된 이미지 모델 사용
+    const cutImgModel = getImageModel();
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${state.apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${cutImgModel}:generateContent?key=${state.apiKey}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     );
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-3-pro-image-preview', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
+    tokenTracker.record(cutImgModel, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
 
     let imgResult = null;
     for (const part of data.candidates[0].content.parts) {
@@ -2124,6 +2535,81 @@ bindEvents = function() {
   // 배치 적용
   const applyBtn = document.getElementById('applyPlacementBtn');
   if (applyBtn) applyBtn.onclick = applyPlacement;
+
+  // ── 모델 설정 이벤트 ──
+  // 프로바이더 선택
+  document.querySelectorAll('[data-pick-provider]').forEach(el => {
+    el.onclick = () => {
+      const prov = el.dataset.pickProvider;
+      state.modelConfig.llmProvider = prov;
+      // 프로바이더 변경 시 해당 프로바이더의 첫 번째 모델로 자동 선택
+      const firstModel = LLM_PROVIDERS[prov]?.models[0]?.id;
+      if (firstModel) state.modelConfig.llmModel = firstModel;
+      render();
+    };
+  });
+
+  // LLM 모델 선택
+  document.querySelectorAll('[data-pick-model]').forEach(el => {
+    el.onclick = () => {
+      state.modelConfig.llmModel = el.dataset.pickModel;
+      render();
+    };
+  });
+
+  // 이미지 모델 선택
+  document.querySelectorAll('[data-pick-imgmodel]').forEach(el => {
+    el.onclick = () => {
+      state.modelConfig.imageModel = el.dataset.pickImgmodel;
+      render();
+    };
+  });
+
+  // Gemini 키 visibility 토글
+  const toggleGemini = document.getElementById('toggleGeminiKey');
+  if (toggleGemini) {
+    toggleGemini.onclick = () => {
+      const inp = document.getElementById('geminiKeyInput');
+      if (!inp) return;
+      if (inp.type === 'password') { inp.type = 'text'; toggleGemini.textContent = 'visibility_off'; }
+      else { inp.type = 'password'; toggleGemini.textContent = 'visibility'; }
+    };
+  }
+
+  // OpenAI 키 visibility 토글
+  const toggleOAI = document.getElementById('toggleOpenAIKey');
+  if (toggleOAI) {
+    toggleOAI.onclick = () => {
+      const inp = document.getElementById('openaiKeyInput');
+      if (!inp) return;
+      if (inp.type === 'password') { inp.type = 'text'; toggleOAI.textContent = 'visibility_off'; }
+      else { inp.type = 'password'; toggleOAI.textContent = 'visibility'; }
+    };
+  }
+
+  // 설정 저장
+  const saveModelBtn = document.getElementById('saveModelSettings');
+  if (saveModelBtn) {
+    saveModelBtn.onclick = () => {
+      // Gemini 키
+      const geminiInp = document.getElementById('geminiKeyInput');
+      if (geminiInp && geminiInp.value.trim()) {
+        state.apiKey = geminiInp.value.trim();
+        saveKey(state.apiKey);
+      }
+      // OpenAI 키
+      const openaiInp = document.getElementById('openaiKeyInput');
+      if (openaiInp && openaiInp.value.trim()) {
+        state.openaiKey = openaiInp.value.trim();
+        saveOpenAIKey(state.openaiKey);
+      }
+      // 모델 설정 저장
+      saveModelConfig(state.modelConfig);
+      // 저장 완료 메시지
+      const msg = document.getElementById('modelSaveMsg');
+      if (msg) { msg.style.display = 'inline'; setTimeout(() => { msg.style.display = 'none'; }, 2000); }
+    };
+  }
 };
 
 function loadCutSource(file) {
