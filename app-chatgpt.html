@@ -151,29 +151,25 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .interval-slider{width:100%;accent-color:var(--primary)}
 
 /* Token Tracker */
-.token-bar{position:fixed;bottom:0;left:0;right:0;background:var(--bg-card);border-top:1px solid var(--border);padding:6px 16px;display:flex;align-items:center;gap:16px;font-size:11px;z-index:500;flex-wrap:wrap}
-.token-bar .tb-label{color:var(--text-m);white-space:nowrap}
-.token-bar .tb-val{font-weight:700;font-family:monospace}
-.token-bar .tb-val.flash{animation:pulse .4s ease}
-.token-bar .sep{color:var(--border);user-select:none}
-.token-bar .tb-model{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
-.token-bar .m-flash{background:rgba(99,102,241,.2);color:var(--primary-h)}
-.token-bar .m-img{background:rgba(249,115,22,.2);color:var(--orange)}
-.token-bar .tb-cost{color:var(--ok);font-weight:700;font-family:monospace}
-.token-bar .tb-reset{cursor:pointer;color:var(--text-m);padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:none;font-size:10px;font-family:inherit}
-.token-bar .tb-reset:hover{color:var(--text);border-color:var(--border-h)}
-.token-detail-btn{cursor:pointer;color:var(--primary-h);font-size:10px;text-decoration:underline;background:none;border:none;font-family:inherit;padding:0}
-.token-modal{position:fixed;bottom:44px;right:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;min-width:360px;max-width:480px;z-index:600;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-.token-modal h3{font-size:14px;font-weight:700;margin-bottom:12px}
-.token-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
-.token-row:last-child{border-bottom:none}
-.token-row .model-name{font-family:monospace;font-size:11px;color:var(--text-d)}
+.token-widget{padding:10px 14px;border-top:1px solid var(--border);font-size:11px}
+.token-bar-wrap{width:100%;height:6px;background:var(--bg-input);border-radius:3px;overflow:hidden;margin:5px 0}
+.token-bar{height:100%;border-radius:3px;transition:width .4s ease}
+.token-bar.safe{background:var(--ok)}
+.token-bar.warn{background:var(--warn)}
+.token-bar.danger{background:var(--err)}
+.token-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.token-model-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.token-model-card h4{font-size:11px;color:var(--text-m);margin-bottom:6px;font-weight:500}
+.token-model-card .val{font-size:22px;font-weight:800;color:var(--primary)}
+.token-model-card .sub{font-size:11px;color:var(--text-d);margin-top:2px}
+.token-limit-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+
 /* Responsive */
 @media(max-width:900px){
   .feature-grid{grid-template-columns:repeat(2,1fr)}
   .section-grid{grid-template-columns:1fr}
   .sidebar{width:60px;overflow:hidden}
-  .sidebar .logo-text,.sidebar .logo-sub,.sidebar .nav-item span:last-child{display:none}
+  .sidebar .logo-text,.sidebar .logo-sub,.sidebar .nav-item span:last-child,.sidebar .token-widget{display:none}
 }
 </style>
 </head>
@@ -203,206 +199,38 @@ const SECTIONS = [
 ];
 
 // ════════════════════════════════════════════════════════════════
-// TOKEN / COST TRACKER
+// OPENAI API SERVICE (gpt-4o + dall-e-3)
 // ════════════════════════════════════════════════════════════════
-// Gemini 2025 공식 가격 (per 1M tokens)
-const MODEL_PRICING = {
-  'gemini-2.0-flash': {
-    inputPerM:  0.10,   // $0.10 / 1M input tokens
-    outputPerM: 0.40,   // $0.40 / 1M output tokens
-    imagePerM:  0.00,   // 텍스트 모델 — 이미지 출력 없음
-    label: 'Gemini 2.0 Flash',
-    type: 'text',
-  },
-  'gemini-3-pro-image-preview': {
-    inputPerM:  3.50,   // $3.50 / 1M input tokens
-    outputPerM: 10.50,  // $10.50 / 1M output tokens
-    imageOut:   0.039,  // $0.039 per image output
-    label: 'Gemini 3 Pro Image',
-    type: 'image',
-  },
-};
-
-const tokenTracker = {
-  sessions: {},   // modelId → { inputTokens, outputTokens, calls, imageCount, costUSD }
-  showDetail: false,
-
-  // 사용량 기록
-  record(modelId, inputTokens, outputTokens, isImage = false) {
-    if (!this.sessions[modelId]) {
-      this.sessions[modelId] = { inputTokens: 0, outputTokens: 0, calls: 0, imageCount: 0, costUSD: 0 };
-    }
-    const s = this.sessions[modelId];
-    s.inputTokens  += inputTokens  || 0;
-    s.outputTokens += outputTokens || 0;
-    s.calls++;
-    if (isImage) s.imageCount++;
-
-    // 비용 계산
-    const p = MODEL_PRICING[modelId];
-    if (p) {
-      const inCost  = (s.inputTokens  / 1_000_000) * p.inputPerM;
-      const outCost = (s.outputTokens / 1_000_000) * p.outputPerM;
-      const imgCost = p.imageOut ? s.imageCount * p.imageOut : 0;
-      s.costUSD = inCost + outCost + imgCost;
-    }
-    this.save();
-    this.renderBar();
-  },
-
-  // 전체 합계
-  totals() {
-    let totalIn = 0, totalOut = 0, totalCost = 0, totalCalls = 0;
-    for (const s of Object.values(this.sessions)) {
-      totalIn    += s.inputTokens;
-      totalOut   += s.outputTokens;
-      totalCost  += s.costUSD;
-      totalCalls += s.calls;
-    }
-    return { totalIn, totalOut, totalCost, totalCalls };
-  },
-
-  // localStorage 저장
-  save() {
-    try { localStorage.setItem('token_tracker', JSON.stringify(this.sessions)); } catch(e) {}
-  },
-
-  // localStorage 불러오기
-  load() {
-    try {
-      const raw = localStorage.getItem('token_tracker');
-      if (raw) this.sessions = JSON.parse(raw);
-    } catch(e) {}
-  },
-
-  reset() {
-    this.sessions = {};
-    try { localStorage.removeItem('token_tracker'); } catch(e) {}
-    this.renderBar();
-  },
-
-  // 하단 바 렌더
-  renderBar() {
-    let bar = document.getElementById('tokenBar');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = 'tokenBar';
-      bar.className = 'token-bar';
-      document.body.appendChild(bar);
-    }
-
-    const { totalIn, totalOut, totalCost, totalCalls } = this.totals();
-    const fmtN = n => n >= 1000 ? (n/1000).toFixed(1)+'K' : n;
-    const fmtUSD = d => d < 0.001 ? '$0.000' : '$' + d.toFixed(4);
-    const fmtKRW = d => '≈₩' + Math.round(d * 1380).toLocaleString();
-
-    // 마지막 사용 모델
-    const lastModel = Object.keys(this.sessions).slice(-1)[0];
-    const lastLabel = lastModel ? (MODEL_PRICING[lastModel]?.label || lastModel) : '-';
-    const isImg = lastModel && MODEL_PRICING[lastModel]?.type === 'image';
-
-    bar.innerHTML = `
-      <span class="tb-label">💰 API 비용</span>
-      <span class="tb-cost" id="tbCostVal">${fmtUSD(totalCost)}</span>
-      <span class="tb-cost" style="color:var(--warn)">${fmtKRW(totalCost)}</span>
-      <span class="sep">│</span>
-      <span class="tb-label">입력</span>
-      <span class="tb-val" id="tbIn">${fmtN(totalIn)} tok</span>
-      <span class="tb-label">출력</span>
-      <span class="tb-val" id="tbOut">${fmtN(totalOut)} tok</span>
-      <span class="sep">│</span>
-      <span class="tb-label">호출</span>
-      <span class="tb-val">${totalCalls}회</span>
-      <span class="sep">│</span>
-      <span class="tb-label">마지막 모델</span>
-      <span class="tb-model ${isImg?'m-img':'m-flash'}">${lastLabel}</span>
-      <span class="sep">│</span>
-      <button class="token-detail-btn" id="tbDetailBtn">상세보기 ▲</button>
-      <button class="tb-reset" id="tbResetBtn">초기화</button>
-    `;
-
-    // 하단 바 때문에 main 패딩 추가
-    const main = document.querySelector('.main');
-    if (main) main.style.paddingBottom = '52px';
-
-    document.getElementById('tbDetailBtn')?.addEventListener('click', () => {
-      this.showDetail = !this.showDetail;
-      this.renderDetail();
-    });
-    document.getElementById('tbResetBtn')?.addEventListener('click', () => {
-      if (confirm('토큰 사용 기록을 초기화할까요?')) this.reset();
-    });
-  },
-
-  // 상세 모달
-  renderDetail() {
-    let modal = document.getElementById('tokenModal');
-    if (!this.showDetail) { modal?.remove(); return; }
-
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'tokenModal';
-      modal.className = 'token-modal';
-      document.body.appendChild(modal);
-    }
-
-    const fmtUSD = d => '$' + d.toFixed(5);
-    const fmtKRW = d => '₩' + Math.round(d * 1380).toLocaleString();
-    const fmtN   = n => n.toLocaleString();
-
-    let rows = '';
-    for (const [modelId, s] of Object.entries(this.sessions)) {
-      const p   = MODEL_PRICING[modelId];
-      const lbl = p?.label || modelId;
-      const typ = p?.type  || 'text';
-      rows += `
-        <div class="token-row">
-          <div>
-            <div style="font-weight:600">${lbl}</div>
-            <div class="model-name">${modelId}</div>
-          </div>
-          <div style="text-align:right;font-size:11px;line-height:1.8">
-            <div>입력 <b>${fmtN(s.inputTokens)}</b> tok</div>
-            <div>출력 <b>${fmtN(s.outputTokens)}</b> tok</div>
-            ${typ==='image' ? `<div>이미지 <b>${s.imageCount}</b>장</div>` : ''}
-            <div>호출 <b>${s.calls}</b>회</div>
-            <div style="color:var(--ok);font-weight:700">${fmtUSD(s.costUSD)} ${fmtKRW(s.costUSD)}</div>
-          </div>
-        </div>`;
-    }
-
-    const { totalCost } = this.totals();
-    modal.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="margin:0">📊 모델별 사용량 상세</h3>
-        <span style="cursor:pointer;font-size:18px;color:var(--text-m)" id="closeTokenModal">✕</span>
-      </div>
-      ${rows || '<div style="color:var(--text-m);font-size:13px">아직 API 호출 없음</div>'}
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:13px;font-weight:700">
-        <span>총 비용</span>
-        <span style="color:var(--ok)">${fmtUSD(totalCost)} (${fmtKRW(totalCost)})</span>
-      </div>
-      <div style="margin-top:8px;font-size:10px;color:var(--text-m)">
-        * 환율 1USD = 1,380원 기준 | Gemini 공식 가격 기준 (변동 가능)
-      </div>
-    `;
-    document.getElementById('closeTokenModal')?.addEventListener('click', () => {
-      this.showDetail = false;
-      modal.remove();
-    });
-  },
-};
-
-// 앱 시작 시 저장된 사용량 복원
-tokenTracker.load();
-
-// ════════════════════════════════════════════════════════════════
-// GEMINI API SERVICE
-// ════════════════════════════════════════════════════════════════
-class GeminiAPI {
+class OpenAIAPI {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+    this.baseUrl = 'https://api.openai.com/v1';
+  }
+
+  _headers() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.apiKey}`
+    };
+  }
+
+  async _chatJSON(messages, temperature = 0.5) {
+    if (isOverLimit()) throw new Error('토큰 한도 초과로 API 호출이 중단되었습니다. 토큰 현황 탭에서 한도를 조정하세요.');
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this._headers(),
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages,
+        temperature,
+        max_tokens: 4096,
+        response_format: { type: 'json_object' }
+      })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    trackChatUsage('gpt-4o', data.usage);
+    return JSON.parse(data.choices[0].message.content);
   }
 
   async analyzeImage(imageBase64, mimeType) {
@@ -430,27 +258,30 @@ Return a JSON object with the following fields:
 }
 Respond ONLY with the JSON object, no other text.`;
 
-    const body = {
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: imageBase64 } }
-        ]
-      }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
-    };
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: 'high' } }
+      ]
+    }];
 
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
+    if (isOverLimit()) throw new Error('토큰 한도 초과로 API 호출이 중단되었습니다. 토큰 현황 탭에서 한도를 조정하세요.');
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      headers: this._headers(),
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        response_format: { type: 'json_object' }
+      })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
-    let text = data.candidates[0].content.parts[0].text.trim();
-    text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
-    return JSON.parse(text);
+    trackChatUsage('gpt-4o', data.usage);
+    return JSON.parse(data.choices[0].message.content);
   }
 
   async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef) {
@@ -494,59 +325,30 @@ Return a JSON object:
 }
 Respond ONLY with the JSON object.`;
 
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
-    };
-
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
-    let text = data.candidates[0].content.parts[0].text.trim();
-    text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
-    return JSON.parse(text);
+    return this._chatJSON([{ role: 'user', content: prompt }], 0.7);
   }
 
-  async generateImage(prompt, productImageBase64, mimeType) {
-    const parts = [
-      { text: `Create a professional Korean e-commerce product detail page section image. ${prompt} Style: clean, modern, high-end Korean shopping mall aesthetic. Size: 860px wide.` }
-    ];
-    if (productImageBase64) {
-      parts.push({ inline_data: { mime_type: mimeType, data: productImageBase64 } });
-    }
-
-    const body = {
-      contents: [{ parts }],
-      generationConfig: {
-        temperature: 0.8,
-        responseModalities: ["TEXT", "IMAGE"]
-      }
-    };
-
+  async generateImage(prompt) {
+    // DALL-E 3: 텍스트 프롬프트만 지원 (이미지 입력 불가)
+    if (isOverLimit()) { console.warn('토큰 한도 초과 — 이미지 생성 스킵'); return null; }
+    const fullPrompt = `Professional Korean e-commerce product detail page section image. ${prompt} Style: clean, modern, high-end Korean shopping mall aesthetic. Wide format 16:9.`;
     try {
-      const res = await fetch(`${this.baseUrl}/models/gemini-3-pro-image-preview:generateContent?key=${this.apiKey}`, {
+      const res = await fetch(`${this.baseUrl}/images/generations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        headers: this._headers(),
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: fullPrompt,
+          n: 1,
+          size: '1792x1024',
+          quality: 'standard',
+          response_format: 'b64_json'
+        })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      tokenTracker.record('gemini-3-pro-image-preview', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
-
-      for (const part of data.candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
-          return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-        }
-        if (part.inline_data && part.inline_data.mime_type?.startsWith('image/')) {
-          return `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
-        }
-      }
-      return null;
+      trackImageUsage();
+      return `data:image/png;base64,${data.data[0].b64_json}`;
     } catch (e) {
       console.warn('Image generation failed:', e.message);
       return null;
@@ -554,7 +356,6 @@ Respond ONLY with the JSON object.`;
   }
 
   async searchSimilarProducts(productName, category) {
-    // Use Gemini to generate competitor analysis since we can't call SerpAPI from browser
     const prompt = `You are a Korean e-commerce market analyst.
 For the product "${productName}" in the category "${category}", provide competitor analysis.
 Return a JSON object:
@@ -568,38 +369,83 @@ Return a JSON object:
 }
 List 5-8 competitor products. Respond ONLY with JSON.`;
 
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.5, maxOutputTokens: 2048 }
-    };
-
-    const res = await fetch(`${this.baseUrl}/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-2.0-flash', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
-    let text = data.candidates[0].content.parts[0].text.trim();
-    text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
-    return JSON.parse(text);
+    return this._chatJSON([{ role: 'user', content: prompt }], 0.5);
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// TOKEN USAGE TRACKER
+// ════════════════════════════════════════════════════════════════
+const _defaultUsage = {
+  'gpt-4o':    { input: 0, output: 0, calls: 0 },
+  'dall-e-3':  { images: 0, calls: 0 },
+  limitTokens: 220000,   // 기본 안전 한도 (토큰)
+  stopped: false,
+};
+
+function loadUsage() {
+  try {
+    const raw = localStorage.getItem('token_usage');
+    if (raw) return { ..._defaultUsage, ...JSON.parse(raw) };
+  } catch(e) {}
+  return { ..._defaultUsage };
+}
+
+function saveUsage() {
+  try { localStorage.setItem('token_usage', JSON.stringify(state.usage)); } catch(e) {}
+}
+
+function trackChatUsage(model, usageObj) {
+  if (!usageObj) return;
+  const m = model || 'gpt-4o';
+  if (!state.usage[m]) state.usage[m] = { input: 0, output: 0, calls: 0 };
+  state.usage[m].input  += usageObj.prompt_tokens    || 0;
+  state.usage[m].output += usageObj.completion_tokens || 0;
+  state.usage[m].calls  += 1;
+  saveUsage();
+  checkUsageLimit();
+}
+
+function trackImageUsage() {
+  if (!state.usage['dall-e-3']) state.usage['dall-e-3'] = { images: 0, calls: 0 };
+  state.usage['dall-e-3'].images += 1;
+  state.usage['dall-e-3'].calls  += 1;
+  saveUsage();
+  // 이미지는 토큰 환산 안 함 (별도 과금)
+}
+
+function totalTokensUsed() {
+  const g = state.usage['gpt-4o'] || {};
+  return (g.input || 0) + (g.output || 0);
+}
+
+function checkUsageLimit() {
+  const used = totalTokensUsed();
+  if (!state.usage.stopped && used >= state.usage.limitTokens) {
+    state.usage.stopped = true;
+    saveUsage();
+    state.error = `⚠️ 토큰 한도 ${state.usage.limitTokens.toLocaleString()} 도달! API 호출이 중단되었습니다. 토큰 현황 탭에서 한도를 조정하거나 초기화하세요.`;
+    render();
+  }
+}
+
+function isOverLimit() {
+  return state.usage.stopped && totalTokensUsed() >= state.usage.limitTokens;
 }
 
 // ════════════════════════════════════════════════════════════════
 // PERSISTENT STORAGE (works on file:// too)
 // ════════════════════════════════════════════════════════════════
 function saveKey(key) {
-  try { localStorage.setItem('gemini_api_key', key); } catch(e) {}
-  try { document.cookie = `gemini_api_key=${encodeURIComponent(key)};max-age=31536000;path=/;SameSite=Lax`; } catch(e) {}
+  try { localStorage.setItem('openai_api_key', key); } catch(e) {}
+  try { document.cookie = `openai_api_key=${encodeURIComponent(key)};max-age=31536000;path=/;SameSite=Lax`; } catch(e) {}
 }
 function loadKey() {
   let k = '';
-  try { k = localStorage.getItem('gemini_api_key') || ''; } catch(e) {}
+  try { k = localStorage.getItem('openai_api_key') || ''; } catch(e) {}
   if (!k) {
     try {
-      const m = document.cookie.match(/gemini_api_key=([^;]+)/);
+      const m = document.cookie.match(/openai_api_key=([^;]+)/);
       if (m) k = decodeURIComponent(m[1]);
     } catch(e) {}
   }
@@ -623,6 +469,7 @@ function loadSectionInstructions() {
 // ════════════════════════════════════════════════════════════════
 const _savedKey = loadKey();
 const _savedInstructions = loadSectionInstructions();
+const _savedUsage = loadUsage();
 const state = {
   step: 'upload', // upload | analyzing | sections | generating | preview
   apiKey: _savedKey,
@@ -641,12 +488,19 @@ const state = {
   error: '',
   activeSectionEdit: null,
   editingPreviewSection: null,
+  // ── Token Usage ──
+  usage: _savedUsage,
   // ── Image Cuts ──
   cuts: {
     sourceBase64: null,
     sourceMime: null,
     sourcePreview: null,
-    prompts: loadPrompts(),
+    prompts: JSON.parse(localStorage.getItem('cuts_prompts') || JSON.stringify([
+      { id:'cut1', label:'컷 1', prompt:'', result:null, generating:false },
+      { id:'cut2', label:'컷 2', prompt:'', result:null, generating:false },
+      { id:'cut3', label:'컷 3', prompt:'', result:null, generating:false },
+      { id:'cut4', label:'컷 4', prompt:'', result:null, generating:false },
+    ])),
     // 상세페이지 섹션 배치: { sectionId: cutId }
     placement: JSON.parse(localStorage.getItem('cuts_placement') || '{}'),
   },
@@ -673,7 +527,7 @@ const state = {
   },
 };
 
-let gemini = null;
+let openai = null;
 
 // ════════════════════════════════════════════════════════════════
 // RENDER ENGINE
@@ -694,6 +548,7 @@ function render() {
           ${state.step === 'preview' ? renderPreview() : ''}
           ${state.step === 'imagecuts' ? renderImageCuts() : ''}
           ${state.step === 'automation' ? renderAutomation() : ''}
+          ${state.step === 'tokenstat' ? renderTokenStat() : ''}
         </div>
       </main>
     </div>
@@ -706,12 +561,12 @@ function renderApiModal() {
   return `<div class="modal-overlay" id="apiModal">
     <div class="modal">
       <h2>🔑 API 키 설정</h2>
-      <p>Google Gemini API 키를 입력하세요. <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--primary)">여기서 발급</a> 받을 수 있습니다.</p>
+      <p>OpenAI API 키를 입력하세요. <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--primary)">여기서 발급</a> 받을 수 있습니다. (gpt-4o + dall-e-3 사용)</p>
       ${hasSaved ? '<p style="margin-top:-12px;margin-bottom:12px;font-size:12px;color:var(--ok)">✅ 이전에 저장한 API 키가 있습니다.</p>' : ''}
       <div class="input-group">
-        <label class="label">Gemini API Key</label>
+        <label class="label">OpenAI API Key</label>
         <div style="position:relative">
-          <input type="text" class="input" id="apiKeyInput" value="${state.apiKey}" placeholder="AIza..." style="padding-right:40px;font-family:monospace;font-size:13px">
+          <input type="text" class="input" id="apiKeyInput" value="${state.apiKey}" placeholder="sk-..." style="padding-right:40px;font-family:monospace;font-size:13px">
           <span class="material-icons-outlined" id="toggleKeyVis" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--text-m)">visibility</span>
         </div>
       </div>
@@ -735,7 +590,16 @@ function renderSidebar() {
     {icon:'preview',label:'미리보기',step:'preview',need:'preview'},
     {icon:'auto_awesome',label:'이미지컷 생성',step:'imagecuts',always:true},
     {icon:'cloud_sync',label:'자동화',step:'automation',always:true},
+    {icon:'data_usage',label:'토큰 현황',step:'tokenstat',always:true},
   ];
+
+  // 미니 토큰 위젯 계산
+  const used = totalTokensUsed();
+  const limit = state.usage.limitTokens;
+  const pct = Math.min(100, Math.round((used / limit) * 100));
+  const barCls = pct >= 95 ? 'danger' : pct >= 75 ? 'warn' : 'safe';
+  const dalle = state.usage['dall-e-3'] || {};
+
   return `<aside class="sidebar">
     <div class="logo">
       <span class="logo-icon">✦</span>
@@ -752,6 +616,24 @@ function renderSidebar() {
         </button>`;
       }).join('')}
     </nav>
+
+    <!-- 미니 토큰 위젯 -->
+    <div class="token-widget">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+        <span style="color:var(--text-d);font-weight:500">토큰 사용량</span>
+        <span style="color:${barCls==='danger'?'var(--err)':barCls==='warn'?'var(--warn)':'var(--ok)'};font-weight:700">${pct}%</span>
+      </div>
+      <div class="token-bar-wrap">
+        <div class="token-bar ${barCls}" style="width:${pct}%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;color:var(--text-m);margin-top:2px">
+        <span>${used.toLocaleString()}</span>
+        <span>/ ${limit.toLocaleString()}</span>
+      </div>
+      ${dalle.images ? `<div style="color:var(--text-m);margin-top:3px">🖼 DALL-E 3: ${dalle.images}장</div>` : ''}
+      ${state.usage.stopped ? '<div style="color:var(--err);font-weight:600;margin-top:4px">⛔ 한도 초과 중단</div>' : ''}
+    </div>
+
     <div style="padding:12px 16px;border-top:1px solid var(--border)">
       <button class="btn-sm" id="changeApiKey" style="width:100%;justify-content:center">
         <span class="material-icons-outlined" style="font-size:14px">key</span> API 키 변경
@@ -796,10 +678,10 @@ function renderUpload() {
     </button>
 
     <div class="feature-grid">
-      <div class="feature-card"><div class="mi material-icons-outlined">visibility</div><h4>이미지 분석</h4><p>Gemini AI가 제품 특징을 자동 분석</p></div>
+      <div class="feature-card"><div class="mi material-icons-outlined">visibility</div><h4>이미지 분석</h4><p>GPT-4o가 제품 특징을 자동 분석</p></div>
       <div class="feature-card"><div class="mi material-icons-outlined">search</div><h4>경쟁 분석</h4><p>유사 제품의 상세페이지 참조 검색</p></div>
       <div class="feature-card"><div class="mi material-icons-outlined">dashboard</div><h4>15섹션 자동생성</h4><p>헤더부터 CTA까지 풀 상세페이지</p></div>
-      <div class="feature-card"><div class="mi material-icons-outlined">image</div><h4>이미지 생성</h4><p>각 섹션에 맞는 이미지 AI 생성</p></div>
+      <div class="feature-card"><div class="mi material-icons-outlined">image</div><h4>이미지 생성</h4><p>DALL-E 3로 각 섹션 이미지 생성</p></div>
     </div>
   </div>`;
 }
@@ -879,7 +761,7 @@ function renderGenerating() {
     <h2 style="font-size:24px;margin-top:32px;margin-bottom:8px">상세페이지 생성 중</h2>
     <p style="color:var(--text-d);margin-bottom:24px;text-align:center">${state.progressMsg}</p>
     <div class="progress-outer"><div class="progress-inner" style="width:${state.progress}%">${state.progress}%</div></div>
-    <p style="font-size:12px;color:var(--text-m);margin-top:16px">15개 섹션 × (콘텐츠 + 이미지) 생성 중 — Gemini API 호출</p>
+    <p style="font-size:12px;color:var(--text-m);margin-top:16px">15개 섹션 × (콘텐츠 + 이미지) 생성 중 — GPT-4o + DALL-E 3 호출</p>
     <div class="gen-icons">
       ${icons.map((ic,i) => `<div class="gen-icon ${i<doneCount?'done':''}">${ic}</div>`).join('')}
     </div>
@@ -966,7 +848,7 @@ function bindEvents() {
       if (!key) return;
       state.apiKey = key;
       saveKey(key);
-      gemini = new GeminiAPI(key);
+      openai = new OpenAIAPI(key);
       state.showApiModal = false;
       render();
     };
@@ -975,7 +857,7 @@ function bindEvents() {
   const skipBtn = document.getElementById('skipApiModal');
   if (skipBtn) {
     skipBtn.onclick = () => {
-      gemini = new GeminiAPI(state.apiKey);
+      openai = new OpenAIAPI(state.apiKey);
       state.showApiModal = false;
       render();
     };
@@ -1109,7 +991,7 @@ async function startAnalysis() {
   if (!state.imageBase64) { state.error = '제품 이미지를 업로드해주세요.'; render(); return; }
   if (!state.apiKey) { state.showApiModal = true; render(); return; }
 
-  gemini = gemini || new GeminiAPI(state.apiKey);
+  openai = openai || new OpenAIAPI(state.apiKey);
   state.error = '';
   state.step = 'analyzing';
   state.progress = 10;
@@ -1118,7 +1000,7 @@ async function startAnalysis() {
 
   try {
     // 1. Analyze image
-    const analysis = await gemini.analyzeImage(state.imageBase64, state.imageMime);
+    const analysis = await openai.analyzeImage(state.imageBase64, state.imageMime);
     if (state.productName) analysis.product_name = state.productName;
     state.analysis = analysis;
     state.progress = 25;
@@ -1127,7 +1009,7 @@ async function startAnalysis() {
 
     // 2. Competitor search
     try {
-      const competitors = await gemini.searchSimilarProducts(
+      const competitors = await openai.searchSimilarProducts(
         analysis.product_name || analysis.product_name_en,
         analysis.category
       );
@@ -1166,7 +1048,7 @@ async function generateAllSections() {
 
     try {
       // Generate content
-      const content = await gemini.generateSectionContent(
+      const content = await openai.generateSectionContent(
         s, state.analysis, state.sectionInstructions[s.id] || '', compRef
       );
       state.sectionContents[s.id] = content;
@@ -1177,7 +1059,7 @@ async function generateAllSections() {
 
       try {
         const imgPrompt = content.image_description || content.design_notes || s.purpose;
-        const img = await gemini.generateImage(imgPrompt, state.imageBase64, state.imageMime);
+        const img = await openai.generateImage(imgPrompt);
         if (img) state.sectionImages[s.id] = img;
       } catch (e) {
         console.warn(`Image gen failed for ${s.id}:`, e);
@@ -1212,14 +1094,14 @@ async function regenerateSection(sectionId) {
   const compRef = state.competitorData ? JSON.stringify(state.competitorData).substring(0, 1000) : '';
 
   try {
-    const content = await gemini.generateSectionContent(
+    const content = await openai.generateSectionContent(
       s, state.analysis, state.sectionInstructions[sectionId] || '', compRef
     );
     state.sectionContents[sectionId] = content;
 
     try {
       const imgPrompt = content.image_description || content.design_notes || s.purpose;
-      const img = await gemini.generateImage(imgPrompt, state.imageBase64, state.imageMime);
+      const img = await openai.generateImage(imgPrompt);
       if (img) state.sectionImages[sectionId] = img;
     } catch (e) {}
 
@@ -1490,6 +1372,113 @@ function autoLog(type, msg) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// TOKEN STAT RENDER
+// ════════════════════════════════════════════════════════════════
+function renderTokenStat() {
+  const u = state.usage;
+  const g4o = u['gpt-4o'] || { input: 0, output: 0, calls: 0 };
+  const dalle = u['dall-e-3'] || { images: 0, calls: 0 };
+  const totalTok = (g4o.input + g4o.output);
+  const limit = u.limitTokens;
+  const pct = Math.min(100, Math.round((totalTok / limit) * 100));
+  const barCls = pct >= 95 ? 'danger' : pct >= 75 ? 'warn' : 'safe';
+
+  // 비용 추정 (gpt-4o: input $2.5/1M, output $10/1M / dall-e-3: $0.04/장 1792x1024)
+  const costGpt = (g4o.input / 1_000_000 * 2.5) + (g4o.output / 1_000_000 * 10);
+  const costDalle = dalle.images * 0.04;
+  const costTotal = costGpt + costDalle;
+
+  return `<div class="fade-in">
+    <h1 class="page-title">📊 토큰 현황</h1>
+    <p class="page-desc">OpenAI API 실시간 사용량 추적. 누적 저장되며 수동 초기화 전까지 유지됩니다.</p>
+
+    <!-- 전체 프로그레스 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+        <div>
+          <div style="font-size:13px;color:var(--text-m);margin-bottom:4px">GPT-4o 토큰 사용량</div>
+          <div style="font-size:36px;font-weight:900;color:${barCls==='danger'?'var(--err)':barCls==='warn'?'var(--warn)':'var(--primary)'}">
+            ${totalTok.toLocaleString()}
+            <span style="font-size:16px;font-weight:400;color:var(--text-d)"> / ${limit.toLocaleString()}</span>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:28px;font-weight:800;color:${barCls==='danger'?'var(--err)':barCls==='warn'?'var(--warn)':'var(--ok)'}">${pct}%</div>
+          <div style="font-size:11px;color:var(--text-m)">한도 대비</div>
+        </div>
+      </div>
+      <div class="token-bar-wrap" style="height:12px;max-width:100%">
+        <div class="token-bar ${barCls}" style="width:${pct}%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-m);margin-top:6px">
+        <span>남은 토큰: <strong style="color:var(--text)">${Math.max(0, limit - totalTok).toLocaleString()}</strong></span>
+        <span>${u.stopped ? '<span style="color:var(--err);font-weight:700">⛔ 한도 초과 — API 중단됨</span>' : '<span style="color:var(--ok)">✅ 정상 운영 중</span>'}</span>
+      </div>
+    </div>
+
+    <!-- 모델별 카드 -->
+    <div class="token-detail-grid">
+      <div class="token-model-card">
+        <h4>🧠 gpt-4o — 입력 토큰</h4>
+        <div class="val">${g4o.input.toLocaleString()}</div>
+        <div class="sub">호출 ${g4o.calls}회 | 약 $${(g4o.input/1_000_000*2.5).toFixed(4)}</div>
+      </div>
+      <div class="token-model-card">
+        <h4>🧠 gpt-4o — 출력 토큰</h4>
+        <div class="val">${g4o.output.toLocaleString()}</div>
+        <div class="sub">호출 ${g4o.calls}회 | 약 $${(g4o.output/1_000_000*10).toFixed(4)}</div>
+      </div>
+      <div class="token-model-card">
+        <h4>🖼 dall-e-3 — 생성 이미지</h4>
+        <div class="val">${dalle.images}<span style="font-size:16px;font-weight:400;color:var(--text-d)"> 장</span></div>
+        <div class="sub">호출 ${dalle.calls}회 | 약 $${costDalle.toFixed(4)}</div>
+      </div>
+      <div class="token-model-card" style="border-color:var(--primary)">
+        <h4>💰 추정 총 비용 (USD)</h4>
+        <div class="val" style="color:var(--warn)">$${costTotal.toFixed(4)}</div>
+        <div class="sub">gpt-4o $${costGpt.toFixed(4)} + dalle $${costDalle.toFixed(4)}</div>
+      </div>
+    </div>
+
+    <!-- 안전 한도 설정 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">
+      <h3 style="font-size:15px;font-weight:600;margin-bottom:14px;display:flex;align-items:center;gap:8px">
+        <span class="material-icons-outlined" style="font-size:18px;color:var(--warn)">tune</span>
+        안전 한도 설정 (GPT-4o 토큰 기준)
+      </h3>
+      <div class="token-limit-row">
+        <input type="range" min="10000" max="500000" step="10000" value="${limit}"
+          class="interval-slider" id="tokenLimitSlider" style="flex:1">
+        <span style="font-size:20px;font-weight:800;color:var(--primary);min-width:100px;text-align:right" id="tokenLimitDisplay">
+          ${limit.toLocaleString()}
+        </span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        ${[50000,100000,150000,200000,220000,250000,300000].map(v =>
+          `<button class="btn-sm token-preset" data-preset="${v}" style="${limit===v?'border-color:var(--primary);color:var(--primary)':''}">${(v/10000).toFixed(0)}만</button>`
+        ).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text-m)">
+        한도 도달 시 자동으로 모든 API 호출을 중단합니다. 무료 크레딧 ${limit.toLocaleString()} 토큰 기준.
+      </div>
+    </div>
+
+    <!-- 초기화 -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${u.stopped ? `<button class="btn-primary" id="resumeUsageBtn" style="background:var(--ok)">
+        <span class="material-icons-outlined" style="font-size:18px">play_circle</span>
+        한도 해제 후 재개
+      </button>` : ''}
+      <button class="btn-sm" id="resetUsageBtn" style="padding:10px 18px;color:var(--err);border-color:var(--err)">
+        <span class="material-icons-outlined" style="font-size:16px">delete_forever</span>
+        사용량 초기화
+      </button>
+      <span style="font-size:12px;color:var(--text-m);align-self:center">마지막 저장: localStorage 누적</span>
+    </div>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════
 // AUTOMATION RENDER
 // ════════════════════════════════════════════════════════════════
 function renderAutomation() {
@@ -1663,7 +1652,7 @@ function renderAutomation() {
 // ════════════════════════════════════════════════════════════════
 async function autoProcessOne() {
   if (!driveService || !state.apiKey) {
-    autoLog('err', 'Drive 또는 Gemini API 키가 설정되지 않음');
+    autoLog('err', 'Drive 또는 OpenAI API 키가 설정되지 않음');
     return;
   }
   if (!state.auto.inputFolderId || !state.auto.outputFolderId) {
@@ -1671,7 +1660,7 @@ async function autoProcessOne() {
     return;
   }
 
-  gemini = gemini || new GeminiAPI(state.apiKey);
+  openai = openai || new OpenAIAPI(state.apiKey);
 
   // 1. List images in input folder
   autoLog('info', '입력 폴더 스캔 중...');
@@ -1729,8 +1718,8 @@ async function autoProcessOne() {
     state.auto.currentMsg = 'AI 분석 중...';
     render();
 
-    // 5. Analyze with Gemini
-    const analysis = await gemini.analyzeImage(imgData.base64, imgData.mime);
+    // 5. Analyze with GPT-4o
+    const analysis = await openai.analyzeImage(imgData.base64, imgData.mime);
     autoLog('ok', `분석 완료: ${analysis.product_name || file.name}`);
     state.auto.currentProgress = 25;
     state.auto.currentMsg = '경쟁 분석 중...';
@@ -1739,7 +1728,7 @@ async function autoProcessOne() {
     // 6. Competitor search
     let compRef = '';
     try {
-      const comp = await gemini.searchSimilarProducts(analysis.product_name || analysis.product_name_en, analysis.category);
+      const comp = await openai.searchSimilarProducts(analysis.product_name || analysis.product_name_en, analysis.category);
       compRef = JSON.stringify(comp).substring(0, 1000);
       autoLog('ok', `경쟁 분석 완료: ${comp.similar_products?.length || 0}개`);
     } catch(e) {
@@ -1760,13 +1749,13 @@ async function autoProcessOne() {
       render();
 
       try {
-        const content = await gemini.generateSectionContent(s, analysis, instructions[s.id] || '', compRef);
+        const content = await openai.generateSectionContent(s, analysis, instructions[s.id] || '', compRef);
         sectionContents[s.id] = content;
 
         // Image
         try {
           const imgPrompt = content.image_description || content.design_notes || s.purpose;
-          const img = await gemini.generateImage(imgPrompt, imgData.base64, imgData.mime);
+          const img = await openai.generateImage(imgPrompt);
           if (img) sectionImages[s.id] = img;
         } catch(e) {}
       } catch(e) {
@@ -1824,7 +1813,7 @@ function renderImageCuts() {
     <h1 class="page-title">✨ 이미지컷 생성</h1>
     <p class="page-desc">제품 이미지를 올리고 4가지 프롬프트로 각각 다른 이미지컷을 생성합니다. 생성된 컷은 상세페이지 원하는 섹션에 배치할 수 있습니다.</p>
     <p style="font-size:12px;color:var(--primary);margin-bottom:20px;background:var(--primary-dim);padding:8px 12px;border-radius:8px;display:inline-block">
-      🤖 이미지 생성 모델: <strong>gemini-3-pro-image-preview</strong>
+      🤖 이미지 생성 모델: <strong>dall-e-3</strong> (gpt-4o 분석 기반)
     </p>
 
     <!-- 소스 이미지 업로드 -->
@@ -1863,7 +1852,7 @@ function renderImageCuts() {
           <!-- 프롬프트 입력 -->
           <textarea class="textarea" data-cut-prompt="${i}" rows="3"
             placeholder="예) 흰 배경에 제품을 중앙 배치, 그림자 없이 깔끔하게&#10;예) 라이프스타일 감성, 카페 테이블 위에 놓인 모습&#10;예) 다크톤 럭셔리, 검은 배경 골드 조명"
-            style="font-size:12px">${p.prompt}</textarea>
+            style="font-size:12px">${p.prompt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
 
           <!-- 개별 생성 버튼 -->
           <button class="btn-primary" data-gen-cut="${i}"
@@ -1932,56 +1921,65 @@ function renderImageCuts() {
 async function generateCut(idx) {
   const c = state.cuts;
   const p = c.prompts[idx];
-  if (!c.sourceBase64 || !p.prompt.trim()) {
-    state.error = '이미지와 프롬프트를 모두 입력해주세요.';
+  if (!p.prompt.trim()) {
+    state.error = '프롬프트를 입력해주세요.';
+    render();
+    return;
+  }
+  if (isOverLimit()) {
+    state.error = '토큰 한도 초과로 이미지 생성이 중단되었습니다. 토큰 현황 탭에서 한도를 조정하세요.';
     render();
     return;
   }
 
-  gemini = gemini || new GeminiAPI(state.apiKey);
+  openai = openai || new OpenAIAPI(state.apiKey);
   p.generating = true;
   render();
 
   try {
-    const fullPrompt = `Create a professional Korean e-commerce product detail page image cut.
-Product image is provided. Apply the following creative direction:
-${p.prompt}
-Requirements: High quality, clean, professional Korean e-commerce style.
-Maintain the product as the focal point. Aspect ratio 4:3.`;
+    // GPT-4o로 소스 이미지를 분석해 DALL-E 3 프롬프트를 강화 (소스 이미지가 있는 경우)
+    let enhancedPrompt = p.prompt;
+    if (c.sourceBase64) {
+      try {
+        const analysisMsg = [{
+          role: 'user',
+          content: [
+            { type: 'text', text: `다음 제품 이미지를 참고하여, 아래 크리에이티브 지시사항으로 DALL-E 3 이미지를 생성할 영문 프롬프트를 작성해줘. 제품의 형태·색상·특징을 최대한 반영해서 영어로만 답해줘. (JSON 없이 프롬프트 텍스트만)\n크리에이티브 지시: ${p.prompt}` },
+            { type: 'image_url', image_url: { url: `data:${c.sourceMime};base64,${c.sourceBase64}`, detail: 'low' } }
+          ]
+        }];
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.apiKey}` },
+          body: JSON.stringify({ model: 'gpt-4o', messages: analysisMsg, max_tokens: 300, temperature: 0.6 })
+        });
+        const data = await res.json();
+        if (!data.error) {
+          trackChatUsage('gpt-4o', data.usage);
+          enhancedPrompt = data.choices[0].message.content.trim();
+        }
+      } catch(e) { /* 강화 실패 시 원본 프롬프트 사용 */ }
+    }
 
-    const parts = [
-      { text: fullPrompt },
-      { inline_data: { mime_type: c.sourceMime, data: c.sourceBase64 } }
-    ];
-    const body = {
-      contents: [{ parts }],
-      generationConfig: { temperature: 0.8, responseModalities: ['TEXT', 'IMAGE'] }
-    };
+    const dallePrompt = `Professional Korean e-commerce product image cut. ${enhancedPrompt} High quality, clean, professional Korean shopping mall style. Aspect ratio 4:3.`;
 
-    // 무조건 gemini-3-pro-image-preview 사용
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${state.apiKey}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-    );
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.apiKey}` },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: dallePrompt,
+        n: 1,
+        size: '1024x1024',
+        quality: 'standard',
+        response_format: 'b64_json'
+      })
+    });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    tokenTracker.record('gemini-3-pro-image-preview', data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
+    trackImageUsage();
 
-    let imgResult = null;
-    for (const part of data.candidates[0].content.parts) {
-      const id = part.inlineData || part.inline_data;
-      if (id && id.mime_type?.startsWith('image/')) {
-        imgResult = `data:${id.mime_type};base64,${id.data}`;
-        break;
-      }
-      if (id && id.mimeType?.startsWith('image/')) {
-        imgResult = `data:${id.mimeType};base64,${id.data}`;
-        break;
-      }
-    }
-    if (!imgResult) throw new Error('이미지가 반환되지 않았습니다');
-
-    p.result = imgResult;
+    p.result = `data:image/png;base64,${data.data[0].b64_json}`;
     p.generating = false;
     savePrompts();
     render();
@@ -2001,37 +1999,12 @@ async function generateAllCuts() {
 
 function savePrompts() {
   // result(base64)는 용량 문제로 저장 안 함 — prompt/label만 저장
-  const toSave = state.cuts.prompts.map(p => ({
-    id: p.id,
-    label: p.label,
-    prompt: p.prompt,
-    result: null,
-    generating: false,
-  }));
-  try { localStorage.setItem('cuts_prompts', JSON.stringify(toSave)); } catch(e) {}
   try {
-    document.cookie = `cuts_prompts=${encodeURIComponent(JSON.stringify(toSave))};max-age=31536000;path=/;SameSite=Lax`;
-  } catch(e) {}
-}
-
-function loadPrompts() {
-  let data = null;
-  try {
-    const raw = localStorage.getItem('cuts_prompts');
-    if (raw) data = JSON.parse(raw);
-  } catch(e) {}
-  if (!data) {
-    try {
-      const m = document.cookie.match(/cuts_prompts=([^;]+)/);
-      if (m) data = JSON.parse(decodeURIComponent(m[1]));
-    } catch(e) {}
+    const toSave = state.cuts.prompts.map(p => ({ id: p.id, label: p.label, prompt: p.prompt, result: null, generating: false }));
+    localStorage.setItem('cuts_prompts', JSON.stringify(toSave));
+  } catch(e) {
+    console.warn('프롬프트 저장 실패:', e);
   }
-  return data || [
-    { id:'cut1', label:'컷 1', prompt:'', result:null, generating:false },
-    { id:'cut2', label:'컷 2', prompt:'', result:null, generating:false },
-    { id:'cut3', label:'컷 3', prompt:'', result:null, generating:false },
-    { id:'cut4', label:'컷 4', prompt:'', result:null, generating:false },
-  ];
 }
 
 function savePlacement() {
@@ -2073,12 +2046,15 @@ bindEvents = function() {
   }
   if (cutsInput) cutsInput.onchange = e => { if (e.target.files[0]) loadCutSource(e.target.files[0]); };
 
-  // 프롬프트 입력 저장
+  // 프롬프트 입력 저장 (oninput + onchange + onblur 모두 커버)
   document.querySelectorAll('[data-cut-prompt]').forEach(el => {
-    el.oninput = e => {
+    const save = e => {
       state.cuts.prompts[+el.dataset.cutPrompt].prompt = e.target.value;
       savePrompts();
     };
+    el.oninput = save;
+    el.onchange = save;
+    el.onblur = save;
   });
 
   // 개별 생성
@@ -2280,10 +2256,67 @@ bindEvents = function() {
 };
 
 // ════════════════════════════════════════════════════════════════
+// BIND TOKEN STAT EVENTS (add to bindEvents)
+// ════════════════════════════════════════════════════════════════
+const _origBindToken = bindEvents;
+bindEvents = function() {
+  _origBindToken();
+
+  // 한도 슬라이더
+  const slider = document.getElementById('tokenLimitSlider');
+  const display = document.getElementById('tokenLimitDisplay');
+  if (slider) {
+    slider.oninput = () => {
+      const v = parseInt(slider.value);
+      state.usage.limitTokens = v;
+      if (display) display.textContent = v.toLocaleString();
+      // 프리셋 버튼 하이라이트 갱신
+      document.querySelectorAll('.token-preset').forEach(btn => {
+        btn.style.borderColor = +btn.dataset.preset === v ? 'var(--primary)' : '';
+        btn.style.color = +btn.dataset.preset === v ? 'var(--primary)' : '';
+      });
+    };
+    slider.onchange = () => { saveUsage(); };
+  }
+
+  // 프리셋 버튼
+  document.querySelectorAll('.token-preset').forEach(btn => {
+    btn.onclick = () => {
+      const v = parseInt(btn.dataset.preset);
+      state.usage.limitTokens = v;
+      state.usage.stopped = false; // 한도 바꾸면 중단 해제
+      saveUsage();
+      render();
+    };
+  });
+
+  // 한도 해제 후 재개
+  const resumeBtn = document.getElementById('resumeUsageBtn');
+  if (resumeBtn) resumeBtn.onclick = () => {
+    state.usage.stopped = false;
+    state.error = '';
+    saveUsage();
+    render();
+  };
+
+  // 사용량 초기화
+  const resetUsageBtn = document.getElementById('resetUsageBtn');
+  if (resetUsageBtn) resetUsageBtn.onclick = () => {
+    if (!confirm('사용량을 초기화하면 누적 토큰 기록이 모두 사라집니다. 계속하시겠습니까?')) return;
+    state.usage['gpt-4o']   = { input: 0, output: 0, calls: 0 };
+    state.usage['dall-e-3'] = { images: 0, calls: 0 };
+    state.usage.stopped = false;
+    state.error = '';
+    saveUsage();
+    render();
+  };
+};
+
+// ════════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════════
 if (state.apiKey) {
-  gemini = new GeminiAPI(state.apiKey);
+  openai = new OpenAIAPI(state.apiKey);
 }
 // Try init Google auth if client ID exists
 setTimeout(() => { try { initGoogleAuth(); } catch(e) {} }, 1000);
