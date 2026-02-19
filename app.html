@@ -247,10 +247,14 @@ const LLM_PROVIDERS = {
     icon: '◆',
     color: '#10a37f',
     models: [
-      { id: 'gpt-4o-mini',  label: 'GPT-4o mini',  desc: '빠름 · 저비용',  inputPerM: 0.15,  outputPerM: 0.60  },
-      { id: 'gpt-4o',       label: 'GPT-4o',        desc: '고성능 · 멀티모달', inputPerM: 2.50,  outputPerM: 10.00 },
-      { id: 'gpt-4-turbo',  label: 'GPT-4 Turbo',  desc: '강력한 추론',    inputPerM: 10.00, outputPerM: 30.00 },
-      { id: 'o1-mini',      label: 'o1-mini',       desc: '고급 추론',      inputPerM: 1.10,  outputPerM: 4.40  },
+      { id: 'gpt-4.1-nano', label: 'GPT-4.1 nano', desc: '초저비용 · 1M 컨텍스트',    inputPerM: 0.10,  outputPerM: 0.40  },
+      { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini', desc: '저비용 · 1M 컨텍스트',      inputPerM: 0.40,  outputPerM: 1.60  },
+      { id: 'o3',           label: 'o3',            desc: '추론 · 저비용',             inputPerM: 0.40,  outputPerM: 1.60  },
+      { id: 'gpt-4o-mini',  label: 'GPT-4o mini',  desc: '빠름 · 멀티모달',           inputPerM: 0.15,  outputPerM: 0.60  },
+      { id: 'gpt-4.1',      label: 'GPT-4.1',      desc: '고성능 · 1M 컨텍스트',      inputPerM: 2.00,  outputPerM: 8.00  },
+      { id: 'gpt-4o',       label: 'GPT-4o',        desc: '고성능 · 멀티모달',         inputPerM: 2.50,  outputPerM: 10.00 },
+      { id: 'o4-mini',      label: 'o4-mini',       desc: '고급 추론 · 200K 컨텍스트', inputPerM: 1.10,  outputPerM: 4.40  },
+      { id: 'gpt-5',        label: 'GPT-5',         desc: '최강 플래그십',             inputPerM: 1.25,  outputPerM: 10.00 },
     ],
   },
 };
