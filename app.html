@@ -275,6 +275,9 @@ function loadModelConfig() {
     llmModel: 'gemini-2.0-flash',
     imageModel: 'gemini-3-pro-image-preview',
     openaiKey: '',
+    imageSizeMode: 'auto',   // 'auto' | 'custom'
+    imageWidth: 860,          // px (custom 모드 시 사용)
+    imageHeight: null,        // px or null (null = 비율 자동 유지)
   };
 }
 function saveOpenAIKey(key) {
@@ -594,8 +597,12 @@ Respond ONLY with the JSON object.`;
 
   async generateImage(prompt, productImageBase64, mimeType, imageModel) {
     const imgMod = imageModel || getImageModel();
+    const cfg = state.modelConfig;
+    const sizeHint = (cfg.imageSizeMode === 'custom' && cfg.imageWidth)
+      ? `Exact size: ${cfg.imageWidth}px wide${cfg.imageHeight ? ' × ' + cfg.imageHeight + 'px tall' : ''}.`
+      : 'Size: 860px wide.';
     const parts = [
-      { text: `Create a professional Korean e-commerce product detail page section image. ${prompt} Style: clean, modern, high-end Korean shopping mall aesthetic. Size: 860px wide.` }
+      { text: `Create a professional Korean e-commerce product detail page section image. ${prompt} Style: clean, modern, high-end Korean shopping mall aesthetic. ${sizeHint}` }
     ];
     if (productImageBase64) {
       parts.push({ inline_data: { mime_type: mimeType, data: productImageBase64 } });
@@ -620,12 +627,13 @@ Respond ONLY with the JSON object.`;
       tokenTracker.record(imgMod, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount, true);
 
       for (const part of data.candidates[0].content.parts) {
+        let raw = null;
         if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
-          return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+          raw = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+        } else if (part.inline_data && part.inline_data.mime_type?.startsWith('image/')) {
+          raw = `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
         }
-        if (part.inline_data && part.inline_data.mime_type?.startsWith('image/')) {
-          return `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
-        }
+        if (raw) return await applyImageSizeConfig(raw);
       }
       return null;
     } catch (e) {
@@ -666,6 +674,51 @@ List 5-8 competitor products. Respond ONLY with JSON.`;
     text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
     return JSON.parse(text);
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// IMAGE RESIZE HELPER (Canvas API — 정확한 픽셀 강제)
+// ════════════════════════════════════════════════════════════════
+function resizeImageDataUrl(dataUrl, targetW, targetH) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ratio = img.naturalWidth / img.naturalHeight;
+        const w = Math.round(targetW);
+        // targetH가 null이면 가로/세로 비율 유지
+        const h = (targetH != null) ? Math.round(targetH) : Math.round(w / ratio);
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        // 선명한 렌더링을 위해 이중 패스 다운스케일
+        if (img.naturalWidth > w * 2 || img.naturalHeight > h * 2) {
+          const tmp = document.createElement('canvas');
+          tmp.width = Math.round(img.naturalWidth / 2);
+          tmp.height = Math.round(img.naturalHeight / 2);
+          tmp.getContext('2d').drawImage(img, 0, 0, tmp.width, tmp.height);
+          ctx.drawImage(tmp, 0, 0, w, h);
+        } else {
+          ctx.drawImage(img, 0, 0, w, h);
+        }
+        resolve(canvas.toDataURL('image/png'));
+      } catch(e) {
+        // 리사이즈 실패 시 원본 반환
+        console.warn('resizeImageDataUrl failed, using original:', e);
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl); // 로드 실패 시 원본 반환
+    img.src = dataUrl;
+  });
+}
+
+// 현재 설정에 따라 이미지를 리사이즈 (auto 모드면 그냥 반환)
+async function applyImageSizeConfig(dataUrl) {
+  const cfg = state.modelConfig;
+  if (!dataUrl || cfg.imageSizeMode !== 'custom' || !cfg.imageWidth) return dataUrl;
+  return resizeImageDataUrl(dataUrl, cfg.imageWidth, cfg.imageHeight || null);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1877,6 +1930,59 @@ function renderModelSettings() {
       ` : ''}
     </div>
 
+    <!-- ── 이미지 크기(픽셀) 설정 ── -->
+    <div class="settings-section">
+      <h3><span class="material-icons-outlined" style="font-size:18px;color:var(--cyan)">photo_size_select_large</span> 이미지 출력 크기</h3>
+      <p style="font-size:12px;color:var(--text-m);margin-bottom:14px">
+        AI가 생성한 이미지를 지정한 픽셀로 <b>정확하게</b> 출력합니다. (Canvas 리사이즈 적용)<br>
+        auto 모드는 AI가 자유롭게 크기를 결정합니다.
+      </p>
+
+      <!-- 모드 토글 -->
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="provider-tab ${cfg.imageSizeMode==='auto' ? 'active-gemini' : ''}"
+          id="imgSizeModeAuto" style="flex:1;padding:10px">
+          <div class="pt-icon" style="font-size:16px;color:var(--text-d)">🔄</div>
+          <div class="pt-label" style="font-size:13px">auto</div>
+          <div class="pt-sub">AI가 크기 자동 결정</div>
+        </button>
+        <button class="provider-tab ${cfg.imageSizeMode==='custom' ? 'active-gemini' : ''}"
+          id="imgSizeModeCustom" style="flex:1;padding:10px">
+          <div class="pt-icon" style="font-size:16px;color:var(--cyan)">📐</div>
+          <div class="pt-label" style="font-size:13px">custom px</div>
+          <div class="pt-sub">정확한 픽셀 지정</div>
+        </button>
+      </div>
+
+      <!-- 픽셀 입력 (custom 모드에서만 활성화) -->
+      <div style="display:flex;gap:12px;align-items:flex-end;${cfg.imageSizeMode!=='custom'?'opacity:.4;pointer-events:none':''}">
+        <div class="input-group" style="margin-bottom:0;flex:1">
+          <label class="label">가로 (W) px</label>
+          <input type="number" class="input" id="imgWidthInput"
+            value="${cfg.imageWidth || 860}" min="64" max="4096" step="1"
+            placeholder="860" style="font-family:monospace"
+            ${cfg.imageSizeMode!=='custom' ? 'disabled' : ''}>
+        </div>
+        <div style="padding-bottom:10px;color:var(--text-m);font-size:18px">×</div>
+        <div class="input-group" style="margin-bottom:0;flex:1">
+          <label class="label">세로 (H) px <span style="font-weight:400;color:var(--text-m)">(비워두면 비율 유지)</span></label>
+          <input type="number" class="input" id="imgHeightInput"
+            value="${cfg.imageHeight || ''}" min="64" max="4096" step="1"
+            placeholder="비율 유지" style="font-family:monospace"
+            ${cfg.imageSizeMode!=='custom' ? 'disabled' : ''}>
+        </div>
+      </div>
+
+      ${cfg.imageSizeMode === 'custom' ? `
+      <div style="margin-top:10px;padding:8px 12px;background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.2);border-radius:6px;font-size:12px;color:var(--cyan)">
+        📐 설정됨: ${cfg.imageWidth}px × ${cfg.imageHeight ? cfg.imageHeight+'px' : '(비율 유지)'}
+        — AI 생성 후 Canvas로 정확히 리사이즈됩니다
+      </div>` : `
+      <div style="margin-top:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text-m)">
+        🔄 auto 모드 — AI가 자유롭게 크기를 결정합니다
+      </div>`}
+    </div>
+
     <!-- ── 저장 버튼 ── -->
     <div style="display:flex;gap:12px;align-items:center">
       <button class="btn-primary" id="saveModelSettings">
@@ -1892,6 +1998,7 @@ function renderModelSettings() {
       <div>LLM 프로바이더: <b style="color:${cfg.llmProvider==='openai'?'#10a37f':'var(--primary-h)'}">${LLM_PROVIDERS[cfg.llmProvider]?.label}</b></div>
       <div>LLM 모델: <code style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px">${cfg.llmModel}</code></div>
       <div>이미지 모델: <code style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px">${cfg.imageModel}</code></div>
+      <div>이미지 크기: <b style="color:var(--cyan)">${cfg.imageSizeMode === 'custom' ? (cfg.imageWidth + 'px × ' + (cfg.imageHeight ? cfg.imageHeight+'px' : '비율유지')) : 'auto'}</b></div>
       <div>Gemini Key: <span style="color:${state.apiKey?'var(--ok)':'var(--err)'}">${state.apiKey ? '✅ 설정됨' : '❌ 미설정'}</span></div>
       <div>OpenAI Key: <span style="color:${state.openaiKey?'var(--ok)':'var(--text-m)'}">${state.openaiKey ? '✅ 설정됨' : '— 미설정'}</span></div>
     </div>
@@ -2353,11 +2460,15 @@ async function generateCut(idx) {
   render();
 
   try {
+    const cfg = state.modelConfig;
+    const sizeHint = (cfg.imageSizeMode === 'custom' && cfg.imageWidth)
+      ? `Exact output size: ${cfg.imageWidth}px wide${cfg.imageHeight ? ' × ' + cfg.imageHeight + 'px tall' : ''}.`
+      : 'Aspect ratio 4:3.';
     const fullPrompt = `Create a professional Korean e-commerce product detail page image cut.
 Product image is provided. Apply the following creative direction:
 ${p.prompt}
 Requirements: High quality, clean, professional Korean e-commerce style.
-Maintain the product as the focal point. Aspect ratio 4:3.`;
+Maintain the product as the focal point. ${sizeHint}`;
 
     const parts = [
       { text: fullPrompt },
@@ -2391,6 +2502,9 @@ Maintain the product as the focal point. Aspect ratio 4:3.`;
       }
     }
     if (!imgResult) throw new Error('이미지가 반환되지 않았습니다');
+
+    // 픽셀 설정이 custom이면 Canvas로 정확히 리사이즈
+    imgResult = await applyImageSizeConfig(imgResult);
 
     p.result = imgResult;
     p.generating = false;
@@ -2587,6 +2701,22 @@ bindEvents = function() {
     };
   }
 
+  // 이미지 크기 모드 토글
+  const imgSizeModeAuto = document.getElementById('imgSizeModeAuto');
+  if (imgSizeModeAuto) {
+    imgSizeModeAuto.onclick = () => {
+      state.modelConfig.imageSizeMode = 'auto';
+      render();
+    };
+  }
+  const imgSizeModeCustom = document.getElementById('imgSizeModeCustom');
+  if (imgSizeModeCustom) {
+    imgSizeModeCustom.onclick = () => {
+      state.modelConfig.imageSizeMode = 'custom';
+      render();
+    };
+  }
+
   // 설정 저장
   const saveModelBtn = document.getElementById('saveModelSettings');
   if (saveModelBtn) {
@@ -2603,11 +2733,23 @@ bindEvents = function() {
         state.openaiKey = openaiInp.value.trim();
         saveOpenAIKey(state.openaiKey);
       }
+      // 이미지 픽셀 설정
+      const wInp = document.getElementById('imgWidthInput');
+      const hInp = document.getElementById('imgHeightInput');
+      if (wInp) {
+        const w = parseInt(wInp.value);
+        if (w >= 64 && w <= 4096) state.modelConfig.imageWidth = w;
+      }
+      if (hInp) {
+        const h = parseInt(hInp.value);
+        state.modelConfig.imageHeight = (hInp.value.trim() === '' || isNaN(h)) ? null : Math.max(64, Math.min(4096, h));
+      }
       // 모델 설정 저장
       saveModelConfig(state.modelConfig);
       // 저장 완료 메시지
       const msg = document.getElementById('modelSaveMsg');
       if (msg) { msg.style.display = 'inline'; setTimeout(() => { msg.style.display = 'none'; }, 2000); }
+      render(); // 사이드바 요약 및 설정 요약 갱신
     };
   }
 };
