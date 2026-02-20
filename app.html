@@ -229,6 +229,17 @@ const SECTIONS = [
 // ════════════════════════════════════════════════════════════════
 // MODEL CONFIG SYSTEM
 // ════════════════════════════════════════════════════════════════
+// 🔑 데모 모드 설정 — 해커톤/시연용 API 키 사전 내장
+// geminiKey, openaiKey를 채워넣으면 방문자가 키 입력 없이 바로 사용 가능
+// enabled: false 로 설정하면 일반 모드(API 키 입력 모달)로 복귀
+// ════════════════════════════════════════════════════════════════
+const DEMO_CONFIG = {
+  enabled: true,
+  geminiKey: '',    // ← 여기에 Gemini API 키 입력 (필수)
+  openaiKey: '',    // ← 여기에 OpenAI API 키 입력 (선택)
+};
+
+// ════════════════════════════════════════════════════════════════
 // LLM 프로바이더 및 모델 목록 정의
 const LLM_PROVIDERS = {
   gemini: {
@@ -275,8 +286,8 @@ function loadModelConfig() {
     if (raw) return JSON.parse(raw);
   } catch(e) {}
   return {
-    llmProvider: 'gemini',
-    llmModel: 'gemini-2.0-flash',
+    llmProvider: 'openai',
+    llmModel: 'gpt-4.1',
     imageModel: 'gemini-3-pro-image-preview',
     openaiKey: '',
     imageSizeMode: 'auto',   // 'auto' | 'custom'
@@ -934,13 +945,21 @@ function loadSectionInstructions() {
 // ════════════════════════════════════════════════════════════════
 // APP STATE
 // ════════════════════════════════════════════════════════════════
+// DEMO_CONFIG 키가 설정되어 있으면 localStorage에 주입 (모달 없이 바로 사용)
+if (DEMO_CONFIG.enabled && DEMO_CONFIG.geminiKey) {
+  try { localStorage.setItem('gemini_api_key', DEMO_CONFIG.geminiKey); } catch(e) {}
+}
+if (DEMO_CONFIG.enabled && DEMO_CONFIG.openaiKey) {
+  try { localStorage.setItem('openai_api_key', DEMO_CONFIG.openaiKey); } catch(e) {}
+}
+
 const _savedKey = loadKey();
 const _savedInstructions = loadSectionInstructions();
 const _savedModelConfig = loadModelConfig();
 const state = {
   step: 'upload', // upload | analyzing | sections | generating | preview | modelsettings
   apiKey: _savedKey,
-  showApiModal: !_savedKey,
+  showApiModal: (DEMO_CONFIG.enabled && DEMO_CONFIG.geminiKey) ? false : !_savedKey,
   modelConfig: _savedModelConfig,
   openaiKey: loadOpenAIKey(),
   productName: '',
@@ -1064,6 +1083,7 @@ function renderSidebar() {
       <span class="logo-icon">✦</span>
       <div><span class="logo-text">상세페이지</span><br><span class="logo-sub">Auto Generator</span></div>
     </div>
+    ${DEMO_CONFIG.enabled && DEMO_CONFIG.geminiKey ? `<div style="margin:0 12px 4px;padding:6px 10px;background:linear-gradient(135deg,#7c3aed22,#2563eb22);border:1px solid #7c3aed44;border-radius:8px;font-size:10px;color:#a78bfa;text-align:center;font-weight:600">🎯 데모 모드 — API 키 내장됨</div>` : ''}
     <nav class="nav">
       ${items.map(it => {
         const active = state.step === it.step;
@@ -2560,6 +2580,7 @@ function loadPrompts() {
     { id:'cut2', label:'컷 2', prompt:'', result:null, generating:false },
     { id:'cut3', label:'컷 3', prompt:'', result:null, generating:false },
     { id:'cut4', label:'컷 4', prompt:'', result:null, generating:false },
+    { id:'cut5', label:'컷 5', prompt:'', result:null, generating:false },
   ];
 }
 
