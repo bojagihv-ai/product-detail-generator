@@ -551,21 +551,32 @@ Respond ONLY with the JSON object, no other text.`;
     return JSON.parse(text);
   }
 
-  async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef) {
+  async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef, referenceRatio) {
+    const ratio = referenceRatio || { competitor: 80, own: 20 };
+    const ratioInstruction = ratio.competitor >= 70
+      ? 'Closely mirror competitor emphasis points, proven selling messages, and section structure from Coupang/Naver top sellers.'
+      : ratio.own >= 70
+        ? 'Focus primarily on unique product features from image analysis. Differentiate strongly from competitors.'
+        : 'Balance competitor insights with product-specific unique features equally.';
+
     const prompt = `You are a Korean e-commerce detail page content creator.
 
-Product Analysis:
+== PRODUCT ANALYSIS (Own Image) ==
 ${JSON.stringify(productAnalysis, null, 2)}
 
-${competitorRef ? 'Competitor Reference: ' + competitorRef : ''}
+${competitorRef ? `== COMPETITOR REFERENCE (Coupang & Naver) ==\n${competitorRef}` : ''}
 
-Section to create: ${sectionDef.name}
-Section number: ${sectionDef.n}
-Section purpose: ${sectionDef.purpose}
-User custom instructions: ${customInstructions || 'None'}
+== CONTENT REFERENCE RATIO ==
+Competitor reference: ${ratio.competitor}% / Own product analysis: ${ratio.own}%
+Instruction: ${ratioInstruction}
 
-Based on the product analysis, generate content for this section.
-Return a JSON object:
+== SECTION TO CREATE ==
+Section: ${sectionDef.name}
+Number: ${sectionDef.n || 'Extra'}
+Purpose: ${sectionDef.purpose}
+User instructions: ${customInstructions || 'None'}
+
+Generate content for this section. Return ONLY a JSON object:
 {
     "headline": "Main headline text in Korean (impactful, short)",
     "subheadline": "Sub headline in Korean",
@@ -657,26 +668,101 @@ Respond ONLY with the JSON object.`;
     }
   }
 
-  async searchSimilarProducts(productName, category) {
-    // Use Gemini to generate competitor analysis since we can't call SerpAPI from browser
-    const prompt = `You are a Korean e-commerce market analyst.
-For the product "${productName}" in the category "${category}", provide competitor analysis.
-Return a JSON object:
+  async searchSimilarProducts(productName, category, scrapedDataJson) {
+    const scrapedSection = scrapedDataJson
+      ? `\n\n== 실제 스크래핑된 제품 데이터 ==\n${scrapedDataJson}\n위 데이터를 기반으로 분석을 강화하세요.`
+      : '\n\n실제 스크래핑 데이터 없음 → 한국 쇼핑몰 전문 지식 기반으로 현실적인 데이터를 생성하세요.';
+    const prompt = `You are a Korean e-commerce market analyst specializing in Coupang and Naver Smart Store.
+Analyze the market for product "${productName}" (category: "${category}").${scrapedSection}
+
+Return ONLY a JSON object (no markdown):
 {
-    "similar_products": [
-        {"name": "product name", "price_range": "price", "strengths": "key strength", "detail_page_style": "description of their detail page approach"}
-    ],
-    "market_insights": "brief market analysis in Korean",
-    "detail_page_trends": ["list of current detail page design trends for this category"],
-    "recommended_approach": "recommended detail page strategy in Korean"
+  "coupang_products": [
+    {
+      "name": "제품명 (Korean)",
+      "price_range": "가격대 (예: 15,000~25,000원)",
+      "seller": "셀러명",
+      "rating": "4.7",
+      "review_count": "2,847",
+      "url": null,
+      "detail_page_emphasis": ["강조 포인트1", "강조 포인트2", "강조 포인트3"],
+      "key_selling_messages": ["핵심 판매 메시지1", "핵심 판매 메시지2"],
+      "section_structure": ["헤더", "핵심특징", "상세스펙", "사용후기", "배송정보"],
+      "visual_style": "비주얼 스타일 설명"
+    }
+  ],
+  "naver_products": [
+    {
+      "name": "제품명 (Korean)",
+      "price_range": "가격대",
+      "store_name": "스마트스토어명",
+      "rating": "4.5",
+      "review_count": "1,200",
+      "url": null,
+      "detail_page_emphasis": ["강조 포인트1", "강조 포인트2"],
+      "key_selling_messages": ["핵심 판매 메시지1", "핵심 판매 메시지2"],
+      "section_structure": ["섹션1", "섹션2", "섹션3"],
+      "visual_style": "비주얼 스타일"
+    }
+  ],
+  "market_insights": "시장 분석 요약 (한국어 3-4문장)",
+  "detail_page_trends": ["트렌드1", "트렌드2", "트렌드3", "트렌드4"],
+  "recommended_approach": "추천 상세페이지 전략 (한국어)",
+  "common_section_patterns": ["공통 섹션 패턴1", "패턴2"],
+  "top_selling_emphasis": ["공통 강조 요소1", "요소2", "요소3"]
 }
-List 5-8 competitor products. Respond ONLY with JSON.`;
+Generate 3-5 products per platform. ONLY JSON, no other text.`;
 
     const body = {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.5, maxOutputTokens: 2048 }
+      generationConfig: { temperature: 0.5, maxOutputTokens: 3000 }
     };
 
+    const res = await fetch(`${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    tokenTracker.record(this.model, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
+    let text = data.candidates[0].content.parts[0].text.trim();
+    text = text.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
+    return JSON.parse(text);
+  }
+
+  async generateExtraSectionSuggestions(productAnalysis, competitorData, existingSectionIds) {
+    const prompt = `You are a Korean e-commerce detail page expert.
+
+Product Analysis:
+${JSON.stringify(productAnalysis, null, 2)}
+
+Competitor Data (Coupang & Naver):
+${JSON.stringify(competitorData, null, 2).substring(0, 2000)}
+
+Existing standard sections (DO NOT suggest these): ${existingSectionIds.join(', ')}
+
+Based on this specific product and competitor analysis, identify 2-5 ADDITIONAL sections
+that would significantly improve this product's detail page beyond the standard sections.
+Focus on sections that competitors specifically emphasize for this product category.
+
+Return ONLY a JSON array:
+[
+  {
+    "id": "unique_snake_case_id_no_korean",
+    "name": "섹션 이름 (Korean)",
+    "icon": "관련 이모지",
+    "purpose": "이 섹션의 목적 (Korean, 1-2문장)",
+    "desc": "섹션 설명 (Korean, 짧게)",
+    "reason": "왜 이 제품에 특히 필요한지 (Korean)"
+  }
+]
+Respond ONLY with the JSON array.`;
+
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.6, maxOutputTokens: 2048 }
+    };
     const res = await fetch(`${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -801,21 +887,32 @@ Respond ONLY with the JSON object, no other text.`;
     return this._parseJSON(data.choices[0].message.content);
   }
 
-  async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef) {
+  async generateSectionContent(sectionDef, productAnalysis, customInstructions, competitorRef, referenceRatio) {
+    const ratio = referenceRatio || { competitor: 80, own: 20 };
+    const ratioInstruction = ratio.competitor >= 70
+      ? 'Closely mirror competitor emphasis points, proven selling messages, and section structure from Coupang/Naver top sellers.'
+      : ratio.own >= 70
+        ? 'Focus primarily on unique product features from image analysis. Differentiate strongly from competitors.'
+        : 'Balance competitor insights with product-specific unique features equally.';
+
     const prompt = `You are a Korean e-commerce detail page content creator.
 
-Product Analysis:
+== PRODUCT ANALYSIS (Own Image) ==
 ${JSON.stringify(productAnalysis, null, 2)}
 
-${competitorRef ? 'Competitor Reference: ' + competitorRef : ''}
+${competitorRef ? `== COMPETITOR REFERENCE (Coupang & Naver) ==\n${competitorRef}` : ''}
 
-Section to create: ${sectionDef.name}
-Section number: ${sectionDef.n}
-Section purpose: ${sectionDef.purpose}
-User custom instructions: ${customInstructions || 'None'}
+== CONTENT REFERENCE RATIO ==
+Competitor reference: ${ratio.competitor}% / Own product analysis: ${ratio.own}%
+Instruction: ${ratioInstruction}
 
-Based on the product analysis, generate content for this section.
-Return a JSON object:
+== SECTION TO CREATE ==
+Section: ${sectionDef.name}
+Number: ${sectionDef.n || 'Extra'}
+Purpose: ${sectionDef.purpose}
+User instructions: ${customInstructions || 'None'}
+
+Generate content for this section. Return ONLY a JSON object:
 {
     "headline": "Main headline text in Korean (impactful, short)",
     "subheadline": "Sub headline in Korean",
@@ -860,27 +957,103 @@ Respond ONLY with the JSON object.`;
     return this._parseJSON(data.choices[0].message.content);
   }
 
-  async searchSimilarProducts(productName, category) {
-    const prompt = `You are a Korean e-commerce market analyst.
-For the product "${productName}" in the category "${category}", provide competitor analysis.
-Return a JSON object:
+  async searchSimilarProducts(productName, category, scrapedDataJson) {
+    const scrapedSection = scrapedDataJson
+      ? `\n\n== 실제 스크래핑된 제품 데이터 ==\n${scrapedDataJson}\n위 데이터를 기반으로 분석을 강화하세요.`
+      : '\n\n실제 스크래핑 데이터 없음 → 한국 쇼핑몰 전문 지식 기반으로 현실적인 데이터를 생성하세요.';
+    const prompt = `You are a Korean e-commerce market analyst specializing in Coupang and Naver Smart Store.
+Analyze the market for product "${productName}" (category: "${category}").${scrapedSection}
+
+Return ONLY a JSON object (no markdown):
 {
-    "similar_products": [
-        {"name": "product name", "price_range": "price", "strengths": "key strength", "detail_page_style": "description of their detail page approach"}
-    ],
-    "market_insights": "brief market analysis in Korean",
-    "detail_page_trends": ["list of current detail page design trends for this category"],
-    "recommended_approach": "recommended detail page strategy in Korean"
+  "coupang_products": [
+    {
+      "name": "제품명 (Korean)",
+      "price_range": "가격대 (예: 15,000~25,000원)",
+      "seller": "셀러명",
+      "rating": "4.7",
+      "review_count": "2,847",
+      "url": null,
+      "detail_page_emphasis": ["강조 포인트1", "강조 포인트2", "강조 포인트3"],
+      "key_selling_messages": ["핵심 판매 메시지1", "핵심 판매 메시지2"],
+      "section_structure": ["헤더", "핵심특징", "상세스펙", "사용후기", "배송정보"],
+      "visual_style": "비주얼 스타일 설명"
+    }
+  ],
+  "naver_products": [
+    {
+      "name": "제품명 (Korean)",
+      "price_range": "가격대",
+      "store_name": "스마트스토어명",
+      "rating": "4.5",
+      "review_count": "1,200",
+      "url": null,
+      "detail_page_emphasis": ["강조 포인트1", "강조 포인트2"],
+      "key_selling_messages": ["핵심 판매 메시지1", "핵심 판매 메시지2"],
+      "section_structure": ["섹션1", "섹션2", "섹션3"],
+      "visual_style": "비주얼 스타일"
+    }
+  ],
+  "market_insights": "시장 분석 요약 (한국어 3-4문장)",
+  "detail_page_trends": ["트렌드1", "트렌드2", "트렌드3", "트렌드4"],
+  "recommended_approach": "추천 상세페이지 전략 (한국어)",
+  "common_section_patterns": ["공통 섹션 패턴1", "패턴2"],
+  "top_selling_emphasis": ["공통 강조 요소1", "요소2", "요소3"]
 }
-List 5-8 competitor products. Respond ONLY with JSON.`;
+Generate 3-5 products per platform. ONLY JSON, no other text.`;
+
+    const body = {
+      model: this.model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 3000,
+      temperature: 0.5,
+    };
+
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    tokenTracker.record(this.model, data.usage?.prompt_tokens, data.usage?.completion_tokens);
+    return this._parseJSON(data.choices[0].message.content);
+  }
+
+  async generateExtraSectionSuggestions(productAnalysis, competitorData, existingSectionIds) {
+    const prompt = `You are a Korean e-commerce detail page expert.
+
+Product Analysis:
+${JSON.stringify(productAnalysis, null, 2)}
+
+Competitor Data (Coupang & Naver):
+${JSON.stringify(competitorData, null, 2).substring(0, 2000)}
+
+Existing standard sections (DO NOT suggest these): ${existingSectionIds.join(', ')}
+
+Based on this specific product and competitor analysis, identify 2-5 ADDITIONAL sections
+that would significantly improve this product's detail page beyond the standard sections.
+Focus on sections that competitors specifically emphasize for this product category.
+
+Return ONLY a JSON array:
+[
+  {
+    "id": "unique_snake_case_id_no_korean",
+    "name": "섹션 이름 (Korean)",
+    "icon": "관련 이모지",
+    "purpose": "이 섹션의 목적 (Korean, 1-2문장)",
+    "desc": "섹션 설명 (Korean, 짧게)",
+    "reason": "왜 이 제품에 특히 필요한지 (Korean)"
+  }
+]
+Respond ONLY with the JSON array.`;
 
     const body = {
       model: this.model,
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 2048,
-      temperature: 0.5,
+      temperature: 0.6,
     };
-
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
@@ -957,7 +1130,7 @@ const _savedKey = loadKey();
 const _savedInstructions = loadSectionInstructions();
 const _savedModelConfig = loadModelConfig();
 const state = {
-  step: 'upload', // upload | analyzing | sections | generating | preview | modelsettings
+  step: 'upload', // upload | analyzing | planning | searching | verifying | sections | generating | preview | modelsettings
   apiKey: _savedKey,
   showApiModal: (DEMO_CONFIG.enabled && DEMO_CONFIG.geminiKey) ? false : !_savedKey,
   modelConfig: _savedModelConfig,
@@ -968,6 +1141,15 @@ const state = {
   imageMime: null,
   analysis: null,
   competitorData: null,
+  verificationMode: 'auto',       // 'auto' | 'manual'
+  verificationResult: [],          // manual 모드 선택된 제품 인덱스
+  extraSections: [],               // AI가 결정한 추가 섹션 정의
+  extraSectionContents: {},        // 추가 섹션 콘텐츠
+  extraSectionImages: {},          // 추가 섹션 이미지
+  referenceRatio: JSON.parse(localStorage.getItem('reference_ratio') || '{"competitor":80,"own":20}'),
+  scrapedProductList: [],          // 스크래핑으로 찾은 제품 목록
+  searchStatus: {},                // { coupang: 'pending'|'ok:N'|'blocked'|'ai-sim', naver: ..., details: ... }
+  doCompetitorSearch: true,        // planning 화면에서 사용자가 선택
   sectionInstructions: _savedInstructions,
   sectionContents: {},
   sectionImages: {},
@@ -1024,6 +1206,9 @@ function render() {
           ${state.error ? renderError() : ''}
           ${state.step === 'upload' ? renderUpload() : ''}
           ${state.step === 'analyzing' ? renderAnalyzing() : ''}
+          ${state.step === 'planning' ? renderPlanning() : ''}
+          ${state.step === 'searching' ? renderSearching() : ''}
+          ${state.step === 'verifying' ? renderVerifying() : ''}
           ${state.step === 'sections' ? renderSections() : ''}
           ${state.step === 'generating' ? renderGenerating() : ''}
           ${state.step === 'preview' ? renderPreview() : ''}
@@ -1161,6 +1346,172 @@ function renderAnalyzing() {
   </div>`;
 }
 
+function renderPlanning() {
+  const a = state.analysis;
+  if (!a) return '';
+  const ratio = state.referenceRatio;
+  return `<div class="fade-in">
+    <h1 class="page-title">✅ 분석 완료 — 생성 계획</h1>
+    <p class="page-desc">AI가 제품을 분석했습니다. 경쟁사 조사 여부를 선택하고 생성을 시작하세요.</p>
+
+    <!-- 분석 결과 카드 -->
+    <div class="analysis-box" style="margin-bottom:20px">
+      <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+        ${state.imagePreview ? `<img src="${state.imagePreview}" style="width:90px;height:90px;object-fit:cover;border-radius:10px;border:1px solid var(--border);flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:200px">
+          <h3 style="font-size:20px;font-weight:700">${a.product_name || '분석된 제품'}</h3>
+          <p style="font-size:13px;color:var(--text-d);margin-top:4px">${a.category||''} ${a.mood?'· '+a.mood:''} ${a.target_audience?'· '+a.target_audience:''}</p>
+          <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${(a.key_features||[]).slice(0,6).map(f=>`<span class="tag">${f}</span>`).join('')}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 섹션 생성 계획 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px">
+        <span class="material-icons-outlined" style="font-size:18px;color:var(--primary)">dashboard_customize</span>
+        생성될 상세페이지 구성 (15섹션)
+      </h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">
+        ${SECTIONS.map((s,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg);border-radius:8px;font-size:12px">
+          <span class="material-icons-outlined" style="font-size:15px;color:var(--primary)">${s.icon}</span>
+          <span style="font-weight:500;color:var(--text-d)">${String(i+1).padStart(2,'0')}. ${s.name}</span>
+        </div>`).join('')}
+      </div>
+      <p style="font-size:12px;color:var(--text-m);margin-top:10px">💡 경쟁사 조사 시 AI가 추가 섹션을 자동으로 결정·생성합니다.</p>
+    </div>
+
+    <!-- 경쟁사 조사 옵션 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        <span class="material-icons-outlined" style="font-size:18px;color:var(--cyan)">travel_explore</span>
+        쿠팡 · 네이버 스마트스토어 경쟁사 조사
+      </h3>
+      <p style="font-size:13px;color:var(--text-d);margin-bottom:16px">유사 제품을 검색·스크래핑하여 경쟁사 상세페이지 구성을 분석합니다. 분석 결과를 참조해 더 경쟁력 있는 상세페이지를 생성합니다.</p>
+
+      <!-- 검증 방식 -->
+      <div style="margin-bottom:14px">
+        <p style="font-size:12px;font-weight:600;color:var(--text-m);margin-bottom:8px">제품 매칭 검증 방식</p>
+        <div style="display:flex;gap:8px">
+          <button id="planVerifyAuto" style="padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ${state.verificationMode==='auto'?'var(--primary)':'var(--border)'};background:${state.verificationMode==='auto'?'var(--primary-dim)':'transparent'};color:${state.verificationMode==='auto'?'var(--primary-h)':'var(--text-m)'}">
+            <span class="material-icons-outlined" style="font-size:15px;vertical-align:middle">auto_fix_high</span> 자동 매칭
+          </button>
+          <button id="planVerifyManual" style="padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ${state.verificationMode==='manual'?'var(--cyan)':'var(--border)'};background:${state.verificationMode==='manual'?'rgba(6,182,212,.12)':'transparent'};color:${state.verificationMode==='manual'?'var(--cyan)':'var(--text-m)'}">
+            <span class="material-icons-outlined" style="font-size:15px;vertical-align:middle">fact_check</span> 직접 확인
+          </button>
+        </div>
+        <p style="font-size:12px;color:var(--text-m);margin-top:6px">${state.verificationMode==='auto'?'AI가 검색된 제품 중 유사 제품을 자동 선별합니다.':'검색된 제품 목록을 직접 보고 참조할 제품을 선택합니다.'}</p>
+      </div>
+
+      <!-- 참조 비율 -->
+      <div style="margin-bottom:16px">
+        <p style="font-size:12px;font-weight:600;color:var(--text-m);margin-bottom:8px">콘텐츠 참조 비율</p>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:12px;color:var(--text-m);white-space:nowrap">자체분석</span>
+          <input type="range" id="planRatioSlider" min="0" max="100" step="10" value="${ratio.competitor}" style="flex:1;accent-color:var(--primary)">
+          <span style="font-size:12px;color:var(--text-m);white-space:nowrap">경쟁사</span>
+        </div>
+        <p id="planRatioLabel" style="font-size:13px;font-weight:600;color:var(--primary);text-align:center;margin-top:6px">경쟁사 ${ratio.competitor}% / 자체분석 ${ratio.own}%</p>
+      </div>
+    </div>
+
+    <!-- 행동 버튼 -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-primary" id="startWithSearch" style="padding:16px;font-size:16px">
+        <span class="material-icons-outlined" style="font-size:20px">travel_explore</span>
+        경쟁사 조사 후 생성
+      </button>
+      <button class="btn-sm" id="startWithoutSearch" style="padding:13px;font-size:14px;justify-content:center">
+        <span class="material-icons-outlined" style="font-size:17px">rocket_launch</span>
+        경쟁사 조사 없이 바로 생성
+      </button>
+    </div>
+  </div>`;
+}
+
+function renderSearching() {
+  const ss = state.searchStatus;
+  const statusIcon = (s) => {
+    if (!s || s === 'pending') return '<span class="material-icons-outlined" style="font-size:16px;color:var(--text-m)">hourglass_empty</span>';
+    if (s === 'searching') return '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div>';
+    if (s.startsWith('ok:')) return `<span class="material-icons-outlined" style="font-size:16px;color:var(--ok)">check_circle</span>`;
+    if (s === 'blocked') return '<span class="material-icons-outlined" style="font-size:16px;color:#f59e0b">block</span>';
+    if (s === 'ai-sim') return '<span class="material-icons-outlined" style="font-size:16px;color:var(--cyan)">psychology</span>';
+    return '<span class="material-icons-outlined" style="font-size:16px;color:#ef4444">error</span>';
+  };
+  const statusText = (key, s) => {
+    if (!s || s === 'pending') return '대기 중';
+    if (s === 'searching') return '검색 중...';
+    if (s.startsWith('ok:')) return `${s.split(':')[1]}개 제품 발견`;
+    if (s === 'blocked') return '봇 차단 → AI 시뮬레이션 전환';
+    if (s === 'ai-sim') return 'AI 시뮬레이션 완료';
+    if (s === 'scraping') return '상세페이지 스크래핑 중...';
+    if (s === 'done') return '스크래핑 완료';
+    return s;
+  };
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh">
+    <div class="spinner-lg"></div>
+    <h2 style="font-size:22px;margin-top:24px;margin-bottom:8px">경쟁사 조사 중</h2>
+    <p style="color:var(--text-d);margin-bottom:28px">${state.progressMsg||'쿠팡·네이버에서 유사 제품 검색 중...'}</p>
+    <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:10px">
+      ${[
+        {key:'coupang', label:'쿠팡 검색', icon:'storefront'},
+        {key:'naver', label:'네이버 스마트스토어 검색', icon:'shopping_bag'},
+        {key:'details', label:'상세페이지 스크래핑', icon:'pageview'},
+        {key:'ai', label:'AI 분석 및 인사이트 생성', icon:'psychology'}
+      ].map(item=>`
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px">
+          <span class="material-icons-outlined" style="font-size:20px;color:var(--primary)">${item.icon}</span>
+          <span style="flex:1;font-size:13px;font-weight:500">${item.label}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${statusIcon(ss[item.key])}
+            <span style="font-size:12px;color:var(--text-m)">${statusText(item.key, ss[item.key])}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  </div>`;
+}
+
+function renderVerifying() {
+  const prods = state.scrapedProductList || [];
+  return `<div class="fade-in">
+    <h1 class="page-title">🔍 유사 제품 확인</h1>
+    <p class="page-desc">검색된 제품 중 실제 동일/유사 제품을 선택해주세요. 선택한 제품의 상세페이지 구성이 콘텐츠에 반영됩니다.</p>
+
+    ${prods.length === 0 ? `<div style="text-align:center;padding:40px;color:var(--text-m)">
+      <span class="material-icons-outlined" style="font-size:48px;opacity:.3">search_off</span>
+      <p style="margin-top:12px">스크래핑된 제품이 없습니다. 바로 생성을 진행합니다.</p>
+    </div>` : `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px">
+      ${prods.map((p,i) => `
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;cursor:pointer;border:2px solid ${(state.verificationResult||[]).includes(i)?'var(--primary)':'var(--border)'};background:${(state.verificationResult||[]).includes(i)?'var(--primary-dim)':'var(--bg-card)'}">
+          <input type="checkbox" data-verify-idx="${i}" ${(state.verificationResult||[]).includes(i)?'checked':''} style="margin-top:3px;flex-shrink:0;accent-color:var(--primary);width:16px;height:16px">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;background:${p.platform==='coupang'?'#ef4444':'#22c55e'};color:#fff">${p.platform==='coupang'?'쿠팡':'네이버'}</span>
+              <span style="font-size:14px;font-weight:600;color:var(--text-d)">${p.name||p.product_name||'이름 없음'}</span>
+            </div>
+            ${p.price_range ? `<p style="font-size:12px;color:var(--primary);font-weight:600">${p.price_range}</p>` : ''}
+            ${p.detail_page_emphasis ? `<p style="font-size:12px;color:var(--text-m);margin-top:4px">${(p.detail_page_emphasis||[]).slice(0,2).join(' · ')}</p>` : ''}
+            ${p.url ? `<a href="${p.url}" target="_blank" style="font-size:11px;color:var(--cyan);text-decoration:none;margin-top:4px;display:inline-block">🔗 상품 페이지 보기</a>` : ''}
+          </div>
+        </label>
+      `).join('')}
+    </div>`}
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn-primary" id="confirmVerify" style="flex:1;padding:14px;justify-content:center">
+        <span class="material-icons-outlined" style="font-size:18px">check_circle</span>
+        선택 완료 — 섹션 설정으로
+      </button>
+      <button class="btn-sm" id="skipVerify" style="padding:14px 20px">
+        전체 참조
+      </button>
+    </div>
+  </div>`;
+}
+
 function renderSections() {
   const a = state.analysis;
   return `<div class="fade-in">
@@ -1185,10 +1536,73 @@ function renderSections() {
         </div>
       </div>
       ${state.competitorData ? `<div style="margin-top:16px;padding:12px 16px;background:var(--bg);border-radius:8px;font-size:13px">
-        <span style="color:var(--text-m)">경쟁 분석:</span>
-        <span style="color:var(--cyan)">${state.competitorData.similar_products?.length||0}개 유사 제품 분석됨</span>
-        ${state.competitorData.recommended_approach ? `<br><span style="color:var(--text-d);margin-top:4px;display:block">${state.competitorData.recommended_approach}</span>` : ''}
+        <span style="color:var(--text-m)">경쟁 분석 완료 —</span>
+        <span style="color:#ef4444;font-weight:600;margin-left:4px">쿠팡 ${state.competitorData.coupang_products?.length||0}개</span>
+        <span style="color:var(--text-m);margin:0 4px">/</span>
+        <span style="color:#22c55e;font-weight:600">네이버 ${state.competitorData.naver_products?.length||0}개</span>
+        ${state.competitorData.recommended_approach ? `<div style="color:var(--text-d);margin-top:6px;font-size:12px">${state.competitorData.recommended_approach}</div>` : ''}
       </div>` : ''}
+    </div>` : ''}
+
+    ${state.competitorData ? `
+    <!-- 제품 검증 패널 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h3 style="font-size:13px;font-weight:700;color:var(--text-d)">제품 매칭 검증 방식</h3>
+        <div style="display:flex;gap:6px">
+          <button style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid ${state.verificationMode==='auto'?'var(--primary)':'var(--border)'};background:${state.verificationMode==='auto'?'var(--primary-dim)':'transparent'};color:${state.verificationMode==='auto'?'var(--primary-h)':'var(--text-m)'}" id="verifyModeAuto">자동 매칭</button>
+          <button style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid ${state.verificationMode==='manual'?'var(--cyan)':'var(--border)'};background:${state.verificationMode==='manual'?'rgba(6,182,212,.12)':'transparent'};color:${state.verificationMode==='manual'?'var(--cyan)':'var(--text-m)'}" id="verifyModeManual">수동 확인</button>
+        </div>
+      </div>
+      ${state.verificationMode === 'auto'
+        ? `<p style="font-size:12px;color:var(--text-m)">AI가 이미지 분석 결과와 검색된 쿠팡/네이버 제품을 자동으로 매칭하여 콘텐츠 생성에 반영합니다.</p>`
+        : (() => {
+            const all = [
+              ...(state.competitorData.coupang_products||[]).map(p=>({...p,platform:'쿠팡'})),
+              ...(state.competitorData.naver_products||[]).map(p=>({...p,platform:'네이버'}))
+            ];
+            return `<p style="font-size:12px;color:var(--text-d);margin-bottom:8px">참조할 제품을 선택하세요 (복수 선택 가능). 선택한 제품의 상세페이지 패턴이 콘텐츠에 반영됩니다.</p>
+            <div style="display:flex;flex-direction:column;gap:5px;max-height:200px;overflow-y:auto">
+              ${all.map((p,i) => `
+                <label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;border:1px solid ${(state.verificationResult||[]).includes(i)?'var(--primary)':'var(--border)'};background:${(state.verificationResult||[]).includes(i)?'var(--primary-dim)':'transparent'}">
+                  <input type="checkbox" data-verify-idx="${i}" ${(state.verificationResult||[]).includes(i)?'checked':''} style="margin-top:2px;flex-shrink:0">
+                  <div>
+                    <span style="font-size:10px;padding:1px 6px;border-radius:10px;background:${p.platform==='쿠팡'?'rgba(239,68,68,.15)':'rgba(34,197,94,.15)'};color:${p.platform==='쿠팡'?'#ef4444':'#22c55e'}">${p.platform}</span>
+                    <span style="font-size:13px;font-weight:600;margin-left:5px">${p.name}</span>
+                    <div style="font-size:11px;color:var(--text-m);margin-top:2px">${p.price_range||''} ${p.rating?'| ⭐'+p.rating:''} ${p.review_count?'('+p.review_count+')':''}</div>
+                  </div>
+                </label>`).join('')}
+            </div>`;
+          })()
+      }
+    </div>
+
+    <!-- 참조 비율 슬라이더 -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h3 style="font-size:13px;font-weight:700;color:var(--text-d)">콘텐츠 참조 비율</h3>
+        <div style="font-size:12px">
+          <span style="color:#22c55e;font-weight:700">경쟁사 ${state.referenceRatio.competitor}%</span>
+          <span style="color:var(--text-m);margin:0 4px">/</span>
+          <span style="color:var(--primary-h);font-weight:700">자체분석 ${state.referenceRatio.own}%</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:10px;color:var(--text-m);white-space:nowrap">자체분석</span>
+        <input type="range" id="ratioSlider" min="0" max="100" step="10" value="${state.referenceRatio.competitor}" style="flex:1;accent-color:#22c55e">
+        <span style="font-size:10px;color:var(--text-m);white-space:nowrap">경쟁사</span>
+      </div>
+      <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:8px">
+        <div style="width:${state.referenceRatio.own}%;background:var(--primary);transition:.3s"></div>
+        <div style="width:${state.referenceRatio.competitor}%;background:#22c55e;transition:.3s"></div>
+      </div>
+      <p style="font-size:11px;color:var(--text-m);margin-top:6px">
+        ${state.referenceRatio.competitor >= 70
+          ? '경쟁사 비율이 높으면 쿠팡/네이버 상위 판매 제품의 강조 포인트와 메시지를 적극 반영합니다.'
+          : state.referenceRatio.own >= 70
+            ? '자체분석 비율이 높으면 이 제품만의 고유한 특징을 강조한 차별화 콘텐츠를 생성합니다.'
+            : '경쟁사 참조와 제품 고유 분석을 균형있게 반영합니다.'}
+      </p>
     </div>` : ''}
 
     <div class="section-grid">
@@ -1210,11 +1624,17 @@ function renderSections() {
       `).join('')}
     </div>
 
-    <div style="text-align:center;margin-top:32px">
+    <div style="text-align:center;margin-top:32px;display:flex;flex-direction:column;align-items:center;gap:12px">
       <button class="btn-primary" id="generateAll2" style="padding:16px 48px;font-size:16px">
         <span class="material-icons-outlined" style="font-size:22px">rocket_launch</span>
         15개 섹션 일괄 생성 시작
       </button>
+      ${Object.keys(state.sectionContents).length > 0 ? `
+      <button class="btn-sm" id="generateExtra" style="padding:10px 24px;font-size:13px;border-color:var(--cyan);color:var(--cyan)">
+        <span class="material-icons-outlined" style="font-size:16px">add_circle</span>
+        경쟁사 분석 기반 추가 섹션 자동 생성
+        ${state.extraSections.length > 0 ? `(${state.extraSections.length}개 완료)` : ''}
+      </button>` : ''}
     </div>
   </div>`;
 }
@@ -1298,7 +1718,57 @@ function renderPreview() {
             </div>
           </div>`;
       }).join('')}
+
+      ${state.extraSections.length > 0 ? `
+        <div style="padding:14px 20px;background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(6,182,212,.08));border-top:2px solid var(--primary);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+          <span style="font-size:16px">✨</span>
+          <span style="font-size:13px;font-weight:700;color:var(--primary-h)">AI 추가 섹션 (경쟁사 분석 기반)</span>
+          <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--primary-dim);color:var(--primary-h)">${state.extraSections.length}개</span>
+        </div>
+        ${state.extraSections.map(s => {
+          const content = state.extraSectionContents[s.id];
+          if (!content) return '';
+          const c = content.color_scheme || {};
+          const f = content.font_suggestion || {};
+          const img = state.extraSectionImages[s.id];
+          return `
+            <div style="position:relative">
+              <div class="section-ctrl" style="background:rgba(99,102,241,.05)">
+                <span style="font-size:16px">${s.icon}</span>
+                <span class="name">${s.name}</span>
+                <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--primary-dim);color:var(--primary-h);margin-left:4px">AI 추가</span>
+                <div style="flex:1"></div>
+              </div>
+              <div style="background:${c.background||'#FFFFFF'};padding:48px 20px;text-align:center">
+                <div style="max-width:860px;margin:0 auto">
+                  <h2 style="font-size:${f.headline_size||'36px'};color:${c.text_primary||'#333'};font-weight:${f.headline_weight||'700'};margin-bottom:10px">
+                    ${content.headline || `[${s.name}]`}
+                  </h2>
+                  <h3 style="font-size:18px;color:${c.text_secondary||'#666'};font-weight:400;margin-bottom:20px">
+                    ${content.subheadline || ''}
+                  </h3>
+                  ${img ? `<img src="${img}" alt="${s.name}" style="max-width:100%;border-radius:12px;margin-bottom:20px">` : ''}
+                  <p style="font-size:${f.body_size||'16px'};color:${c.text_secondary||'#666'};line-height:1.8;max-width:680px;margin:0 auto">
+                    ${content.body_text || ''}
+                  </p>
+                  ${content.extra_elements?.length ? `<div style="margin-top:20px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto">
+                    ${content.extra_elements.map(e => `<div style="padding:8px 0;color:${c.text_secondary||'#555'};font-size:14px;border-bottom:1px solid rgba(0,0,0,.05)">• ${e}</div>`).join('')}
+                  </div>` : ''}
+                  ${content.cta_text ? `<div style="display:inline-block;margin-top:20px;padding:12px 36px;background:${c.accent||'#6366f1'};color:#fff;border-radius:8px;font-weight:600;font-size:16px">${content.cta_text}</div>` : ''}
+                </div>
+              </div>
+            </div>`;
+        }).join('')}
+      ` : ''}
     </div>
+
+    ${Object.keys(state.sectionContents).length > 0 && !state.extraSections.length ? `
+    <div style="text-align:center;margin-top:20px">
+      <button class="btn-sm" id="generateExtraFromPreview" style="padding:10px 24px;font-size:13px;border-color:var(--cyan);color:var(--cyan)">
+        <span class="material-icons-outlined" style="font-size:16px">add_circle</span>
+        경쟁사 분석 기반 추가 섹션 생성
+      </button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -1469,34 +1939,238 @@ async function startAnalysis() {
   render();
 
   try {
-    // 1. Analyze image
+    // 1. 이미지 분석만 수행 (경쟁사 검색은 planning에서 사용자가 결정)
     const analysis = await llm.analyzeImage(state.imageBase64, state.imageMime);
     if (state.productName) analysis.product_name = state.productName;
     state.analysis = analysis;
-    state.progress = 25;
-    state.progressMsg = '유사 제품 검색 중...';
-    render();
+    state.competitorData = null;
+    state.scrapedProductList = [];
+    state.verificationResult = [];
+    state.extraSections = [];
+    state.extraSectionContents = {};
+    state.extraSectionImages = {};
 
-    // 2. Competitor search
-    try {
-      const competitors = await llm.searchSimilarProducts(
-        analysis.product_name || analysis.product_name_en,
-        analysis.category
-      );
-      state.competitorData = competitors;
-    } catch (e) {
-      state.competitorData = null;
-    }
-
-    state.progress = 35;
-    state.step = 'sections';
+    state.progress = 100;
     state.progressMsg = '분석 완료!';
+    state.step = 'planning';
     render();
   } catch (e) {
     state.error = `분석 실패: ${e.message}`;
     state.step = 'upload';
     render();
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCRAPING UTILITIES
+// ════════════════════════════════════════════════════════════════
+
+async function fetchWithProxy(url) {
+  const proxies = [
+    () => fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(12000) })
+      .then(r => r.json()).then(d => d.contents),
+    () => fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(12000) })
+      .then(r => r.ok ? r.text() : null),
+  ];
+  for (const fn of proxies) {
+    try {
+      const html = await fn();
+      if (html && html.length > 500) return html;
+    } catch(e) { /* try next */ }
+  }
+  return null;
+}
+
+function cleanHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function parseCoupangHTML(html) {
+  const products = [];
+  // Coupang product links pattern
+  const patterns = [
+    /href="(\/vp\/products\/\d+[^"]*)"[^>]*>[\s\S]{0,500}?class="[^"]*name[^"]*"[^>]*>([\s\S]{0,200}?)<\//gi,
+    /"productId":(\d+),"productName":"([^"]{5,100})"/gi,
+  ];
+  const seen = new Set();
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(html)) !== null && products.length < 5) {
+      const rawName = m[2].replace(/<[^>]+>/g, '').trim();
+      const name = rawName.substring(0, 80);
+      const url = m[1].startsWith('/') ? 'https://www.coupang.com' + m[1].split('?')[0] : null;
+      if (name && name.length >= 5 && !seen.has(name)) {
+        seen.add(name);
+        products.push({ name, url, platform: 'coupang', price_range: '', detail_page_emphasis: [], key_selling_messages: [] });
+      }
+    }
+  }
+  // fallback: extract any product-like names from text
+  if (products.length < 2) {
+    const text = cleanHtml(html);
+    const lines = text.split(/[|\n,]/).map(l=>l.trim()).filter(l=>l.length>8 && l.length<80);
+    for (const line of lines.slice(0,5)) {
+      if (!seen.has(line)) {
+        seen.add(line);
+        products.push({ name: line, url: null, platform: 'coupang', price_range: '', detail_page_emphasis: [], key_selling_messages: [] });
+      }
+      if (products.length >= 5) break;
+    }
+  }
+  return products;
+}
+
+function parseNaverHTML(html) {
+  const products = [];
+  const seen = new Set();
+  // Naver product data patterns
+  const patterns = [
+    /"productName":"([^"]{5,100})","mallName":"([^"]{1,50})","price":(\d+)/gi,
+    /"title":"([^"]{5,100})","link":"(https:\/\/[^"]+)"/gi,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(html)) !== null && products.length < 5) {
+      const name = m[1].trim().substring(0, 80);
+      const url = m[2] || null;
+      const price = m[3] ? parseInt(m[3]).toLocaleString() + '원' : '';
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        products.push({ name, url, platform: 'naver', price_range: price, detail_page_emphasis: [], key_selling_messages: [] });
+      }
+    }
+  }
+  return products;
+}
+
+async function scrapeDetailText(url) {
+  if (!url) return '';
+  try {
+    const html = await fetchWithProxy(url);
+    if (!html) return '';
+    return cleanHtml(html).substring(0, 1500);
+  } catch(e) { return ''; }
+}
+
+async function searchCompetitors() {
+  state.step = 'searching';
+  state.searchStatus = { coupang: 'pending', naver: 'pending', details: 'pending', ai: 'pending' };
+  state.progressMsg = '쿠팡 · 네이버에서 유사 제품 검색 중...';
+  render();
+
+  const query = state.analysis.product_name || state.productName || '';
+  let coupangProds = [];
+  let naverProds = [];
+
+  // ── 쿠팡 검색 ──
+  state.searchStatus.coupang = 'searching';
+  render();
+  try {
+    const html = await fetchWithProxy(`https://www.coupang.com/np/search?q=${encodeURIComponent(query)}&listSize=36`);
+    if (html && !html.toLowerCase().includes('captcha') && html.length > 1000) {
+      coupangProds = parseCoupangHTML(html);
+      state.searchStatus.coupang = `ok:${coupangProds.length}`;
+    } else {
+      state.searchStatus.coupang = 'blocked';
+    }
+  } catch(e) { state.searchStatus.coupang = 'blocked'; }
+  render();
+
+  // ── 네이버 검색 ──
+  state.searchStatus.naver = 'searching';
+  render();
+  try {
+    const html = await fetchWithProxy(`https://search.shopping.naver.com/search/all?query=${encodeURIComponent(query)}`);
+    if (html && !html.toLowerCase().includes('captcha') && html.length > 1000) {
+      naverProds = parseNaverHTML(html);
+      state.searchStatus.naver = `ok:${naverProds.length}`;
+    } else {
+      state.searchStatus.naver = 'blocked';
+    }
+  } catch(e) { state.searchStatus.naver = 'blocked'; }
+  render();
+
+  // ── 상세페이지 스크래핑 ──
+  state.searchStatus.details = 'scraping';
+  state.progressMsg = '각 제품 상세페이지 스크래핑 중...';
+  render();
+  const allFound = [...coupangProds, ...naverProds];
+  for (const p of allFound.slice(0, 6)) {
+    if (p.url) {
+      const txt = await scrapeDetailText(p.url);
+      if (txt) p.scraped_text = txt;
+    }
+  }
+  state.searchStatus.details = 'done';
+
+  // ── AI 분석 ──
+  state.searchStatus.ai = 'searching';
+  state.progressMsg = 'AI가 경쟁사 데이터 분석 중...';
+  render();
+  try {
+    const llm = getLLMClient();
+    if (allFound.length >= 2) {
+      // 스크래핑 성공 시 AI로 enrichment
+      const enriched = await llm.searchSimilarProducts(query, state.analysis.category, JSON.stringify(allFound.slice(0,6)));
+      // 스크래핑 결과와 AI 분석 결합
+      state.competitorData = {
+        ...enriched,
+        coupang_products: coupangProds.length > 0 ? coupangProds : enriched.coupang_products,
+        naver_products: naverProds.length > 0 ? naverProds : enriched.naver_products,
+        scraped: allFound.length > 0,
+      };
+    } else {
+      // 스크래핑 실패 → 완전 AI 시뮬레이션
+      const competitors = await llm.searchSimilarProducts(query, state.analysis.category, null);
+      state.competitorData = competitors;
+      state.searchStatus.coupang = 'ai-sim';
+      state.searchStatus.naver = 'ai-sim';
+    }
+    state.searchStatus.ai = 'done';
+  } catch(e) {
+    state.searchStatus.ai = 'failed';
+  }
+
+  // 스크래핑 결과를 scrapedProductList에도 저장 (verifying 화면용)
+  const cd = state.competitorData;
+  state.scrapedProductList = [
+    ...(cd?.coupang_products||[]).map(p=>({...p, platform:'coupang'})),
+    ...(cd?.naver_products||[]).map(p=>({...p, platform:'naver'})),
+  ];
+
+  render();
+  await new Promise(r => setTimeout(r, 600)); // 완료 상태 잠깐 표시
+
+  if (state.verificationMode === 'manual' && state.scrapedProductList.length > 0) {
+    state.step = 'verifying';
+  } else {
+    state.step = 'sections';
+  }
+  render();
+}
+
+function buildCompRef() {
+  if (!state.competitorData) return '';
+  if (state.verificationMode === 'manual' && state.verificationResult?.length > 0) {
+    const cd = state.competitorData;
+    const all = [
+      ...(cd.coupang_products||[]).map(p=>({...p, platform:'쿠팡'})),
+      ...(cd.naver_products||[]).map(p=>({...p, platform:'네이버'}))
+    ];
+    const selected = state.verificationResult.map(i=>all[i]).filter(Boolean);
+    return JSON.stringify({...cd, selected_references: selected}).substring(0, 2500);
+  }
+  return JSON.stringify(state.competitorData).substring(0, 2500);
 }
 
 async function generateAllSections() {
@@ -1512,7 +2186,7 @@ async function generateAllSections() {
   const geminiForImage = new GeminiAPI(state.apiKey);
 
   const total = SECTIONS.length;
-  const compRef = state.competitorData ? JSON.stringify(state.competitorData).substring(0, 1000) : '';
+  const compRef = buildCompRef();
 
   for (let i = 0; i < total; i++) {
     const s = SECTIONS[i];
@@ -1524,7 +2198,7 @@ async function generateAllSections() {
     try {
       // Generate content via selected LLM
       const content = await llm.generateSectionContent(
-        s, state.analysis, state.sectionInstructions[s.id] || '', compRef
+        s, state.analysis, state.sectionInstructions[s.id] || '', compRef, state.referenceRatio
       );
       state.sectionContents[s.id] = content;
 
@@ -1567,14 +2241,14 @@ async function regenerateSection(sectionId) {
   if (!s) return;
 
   state.progressMsg = `${s.name} 재생성 중...`;
-  const compRef = state.competitorData ? JSON.stringify(state.competitorData).substring(0, 1000) : '';
+  const compRef = buildCompRef();
 
   let llm;
   try { llm = getLLMClient(); } catch(e) { state.error = e.message; render(); return; }
 
   try {
     const content = await llm.generateSectionContent(
-      s, state.analysis, state.sectionInstructions[sectionId] || '', compRef
+      s, state.analysis, state.sectionInstructions[sectionId] || '', compRef, state.referenceRatio
     );
     state.sectionContents[sectionId] = content;
 
@@ -1592,6 +2266,65 @@ async function regenerateSection(sectionId) {
     state.error = `재생성 실패: ${e.message}`;
     render();
   }
+}
+
+async function generateExtraSections() {
+  if (!state.analysis || !state.competitorData) {
+    state.error = '먼저 이미지 분석과 경쟁사 검색을 완료해주세요.';
+    render(); return;
+  }
+  let llm;
+  try { llm = getLLMClient(); } catch(e) { state.error = e.message; render(); return; }
+  const geminiForImage = new GeminiAPI(state.apiKey);
+
+  state.step = 'generating';
+  state.progress = 0;
+  state.progressMsg = '경쟁사 분석 기반 추가 섹션 결정 중...';
+  render();
+
+  let suggestions;
+  try {
+    suggestions = await llm.generateExtraSectionSuggestions(
+      state.analysis, state.competitorData, SECTIONS.map(s => s.id)
+    );
+    if (!Array.isArray(suggestions)) suggestions = [];
+  } catch(e) {
+    state.error = `추가 섹션 결정 실패: ${e.message}`;
+    state.step = 'preview'; render(); return;
+  }
+
+  state.extraSections = suggestions;
+  state.extraSectionContents = {};
+  state.extraSectionImages = {};
+
+  for (let i = 0; i < suggestions.length; i++) {
+    const s = suggestions[i];
+    const pct = Math.round(((i / suggestions.length) * 80));
+    state.progress = pct;
+    state.progressMsg = `추가 섹션 [${i+1}/${suggestions.length}] ${s.name} 생성 중...`;
+    render();
+    try {
+      const content = await llm.generateSectionContent(
+        s, state.analysis, '', buildCompRef(), state.referenceRatio
+      );
+      state.extraSectionContents[s.id] = content;
+      if (state.apiKey) {
+        try {
+          const imgPrompt = content.image_description || content.design_notes || s.purpose;
+          const img = await geminiForImage.generateImage(imgPrompt, state.imageBase64, state.imageMime);
+          if (img) state.extraSectionImages[s.id] = img;
+        } catch(e) {}
+      }
+    } catch(e) {
+      console.warn(`Extra section ${s.id} failed:`, e);
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  state.progress = 100;
+  state.progressMsg = `추가 섹션 ${suggestions.length}개 생성 완료!`;
+  state.step = 'preview';
+  render();
 }
 
 function exportHTML() {
@@ -2299,7 +3032,7 @@ async function autoProcessOne() {
       render();
 
       try {
-        const content = await autoLLM.generateSectionContent(s, analysis, instructions[s.id] || '', compRef);
+        const content = await autoLLM.generateSectionContent(s, analysis, instructions[s.id] || '', compRef, state.referenceRatio);
         sectionContents[s.id] = content;
 
         // Image (항상 Gemini 이미지 모델)
@@ -2790,15 +3523,12 @@ function loadCutSource(file) {
   reader.readAsDataURL(file);
 }
 
-function buildExportHtml(analysis, sectionContents, sectionImages) {
+function buildExportHtml(analysis, sectionContents, sectionImages, extraSections, extraSectionContents, extraSectionImages) {
   let sectionsHtml = '';
-  for (const s of SECTIONS) {
-    const content = sectionContents[s.id];
-    if (!content) continue;
+  const renderSectionHtml = (s, content, img) => {
     const c = content.color_scheme || {};
     const f = content.font_suggestion || {};
-    const img = sectionImages[s.id];
-    sectionsHtml += `
+    return `
     <section style="background:${c.background||'#FFFFFF'};padding:60px 20px;text-align:center;">
       <div style="max-width:860px;margin:0 auto;">
         <h2 style="font-size:${f.headline_size||'36px'};color:${c.text_primary||'#333'};margin-bottom:12px;font-weight:${f.headline_weight||'700'};">${content.headline||''}</h2>
@@ -2809,6 +3539,20 @@ function buildExportHtml(analysis, sectionContents, sectionImages) {
         ${content.cta_text ? `<a href="#" style="display:inline-block;margin-top:24px;padding:14px 40px;background:${c.accent||'#6366f1'};color:#fff;border-radius:8px;text-decoration:none;font-size:18px;font-weight:600;">${content.cta_text}</a>` : ''}
       </div>
     </section>`;
+  };
+  for (const s of SECTIONS) {
+    const content = sectionContents[s.id];
+    if (!content) continue;
+    sectionsHtml += renderSectionHtml(s, content, sectionImages[s.id]);
+  }
+  // 추가 섹션 포함
+  const exSecs = extraSections || state.extraSections || [];
+  const exContents = extraSectionContents || state.extraSectionContents || {};
+  const exImages = extraSectionImages || state.extraSectionImages || {};
+  for (const s of exSecs) {
+    const content = exContents[s.id];
+    if (!content) continue;
+    sectionsHtml += renderSectionHtml(s, content, exImages[s.id]);
   }
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${analysis.product_name||'상세페이지'}</title><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Noto Sans KR',sans-serif;color:#333}img{max-width:100%;height:auto}section{width:100%}</style></head><body>${sectionsHtml}</body></html>`;
 }
@@ -2930,6 +3674,93 @@ bindEvents = function() {
     autoLog('info', '처리 기록 초기화됨');
     render();
   };
+};
+
+// ════════════════════════════════════════════════════════════════
+// BIND COMPETITOR & PLANNING EVENTS (add to bindEvents)
+// ════════════════════════════════════════════════════════════════
+const _origBind3 = bindEvents;
+bindEvents = function() {
+  _origBind3();
+
+  // ── Planning 화면 ──
+  const planVerAuto = document.getElementById('planVerifyAuto');
+  if (planVerAuto) planVerAuto.onclick = () => { state.verificationMode = 'auto'; render(); };
+  const planVerManual = document.getElementById('planVerifyManual');
+  if (planVerManual) planVerManual.onclick = () => { state.verificationMode = 'manual'; render(); };
+
+  const planRatio = document.getElementById('planRatioSlider');
+  if (planRatio) planRatio.oninput = () => {
+    const competitor = parseInt(planRatio.value, 10);
+    state.referenceRatio = { competitor, own: 100 - competitor };
+    try { localStorage.setItem('reference_ratio', JSON.stringify(state.referenceRatio)); } catch(e) {}
+    const lbl = document.getElementById('planRatioLabel');
+    if (lbl) lbl.textContent = `경쟁사 ${competitor}% / 자체분석 ${100 - competitor}%`;
+  };
+
+  const startWithSearch = document.getElementById('startWithSearch');
+  if (startWithSearch) startWithSearch.onclick = () => searchCompetitors();
+
+  const startWithoutSearch = document.getElementById('startWithoutSearch');
+  if (startWithoutSearch) startWithoutSearch.onclick = () => {
+    state.competitorData = null;
+    state.step = 'sections';
+    render();
+  };
+
+  // ── Verifying 화면 ──
+  document.querySelectorAll('[data-verify-idx]').forEach(cb => {
+    cb.onchange = () => {
+      const idx = parseInt(cb.dataset.verifyIdx, 10);
+      if (!state.verificationResult) state.verificationResult = [];
+      if (cb.checked) {
+        if (!state.verificationResult.includes(idx)) state.verificationResult.push(idx);
+      } else {
+        state.verificationResult = state.verificationResult.filter(i => i !== idx);
+      }
+      // 라벨 배경색 즉시 반영
+      const label = cb.closest('label');
+      if (label) {
+        label.style.borderColor = cb.checked ? 'var(--primary)' : 'var(--border)';
+        label.style.background = cb.checked ? 'var(--primary-dim)' : 'var(--bg-card)';
+      }
+    };
+  });
+
+  const confirmVerify = document.getElementById('confirmVerify');
+  if (confirmVerify) confirmVerify.onclick = () => { state.step = 'sections'; render(); };
+
+  const skipVerify = document.getElementById('skipVerify');
+  if (skipVerify) skipVerify.onclick = () => {
+    // 전체 선택
+    state.verificationResult = state.scrapedProductList.map((_,i) => i);
+    state.step = 'sections';
+    render();
+  };
+
+  // ── Sections 화면 내 검증 토글 ──
+  const vAuto = document.getElementById('verifyModeAuto');
+  if (vAuto) vAuto.onclick = () => { state.verificationMode = 'auto'; render(); };
+  const vManual = document.getElementById('verifyModeManual');
+  if (vManual) vManual.onclick = () => { state.verificationMode = 'manual'; render(); };
+
+  // 참조 비율 슬라이더 (sections 화면)
+  const ratioSlider = document.getElementById('ratioSlider');
+  if (ratioSlider) {
+    ratioSlider.oninput = () => {
+      const competitor = parseInt(ratioSlider.value, 10);
+      state.referenceRatio = { competitor, own: 100 - competitor };
+      try { localStorage.setItem('reference_ratio', JSON.stringify(state.referenceRatio)); } catch(e) {}
+      const ratioLabel = document.getElementById('ratioLabel');
+      if (ratioLabel) ratioLabel.textContent = `경쟁사 ${competitor}% / 자체분석 ${100 - competitor}%`;
+    };
+  }
+
+  // 추가 섹션 생성 버튼
+  const genExtra = document.getElementById('generateExtra');
+  if (genExtra) genExtra.onclick = () => generateExtraSections();
+  const genExtraPreview = document.getElementById('generateExtraFromPreview');
+  if (genExtraPreview) genExtraPreview.onclick = () => generateExtraSections();
 };
 
 // ════════════════════════════════════════════════════════════════
